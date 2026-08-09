@@ -4,12 +4,26 @@ import { decryptSecretsFile } from './decrypt.mjs';
 import { formatEnvFile } from './envfile.mjs';
 import { parseRunArgs } from './args.mjs';
 
+/**
+ * `secretsFilePath` builds a real filesystem path with `join`, so on Windows it
+ * separates with `\` while the literals below are POSIX. The function is right —
+ * `decryptSecretsFile` opens what it returns — so the assertion is what has to
+ * stop being platform-specific.
+ *
+ * NORMALISED RATHER THAN BUILT WITH `join`. Writing the expectation as
+ * `join('/repo', 'secrets', 'local.enc.yaml')` would also pass everywhere, and
+ * would pass even if the function joined the wrong pieces: the test would be
+ * asserting its own copy of the implementation. Normalising keeps the literal
+ * readable and keeps the assertion about the result.
+ */
+const posix = (value) => value.replaceAll('\\', '/');
+
 describe('secretsFilePath', () => {
   it('maps an environment name onto its ciphertext file', () => {
-    expect(secretsFilePath('local', { root: '/repo' })).toBe(
+    expect(posix(secretsFilePath('local', { root: '/repo' }))).toBe(
       '/repo/secrets/local.enc.yaml',
     );
-    expect(secretsFilePath('production', { root: '/repo' })).toBe(
+    expect(posix(secretsFilePath('production', { root: '/repo' }))).toBe(
       '/repo/secrets/production.enc.yaml',
     );
   });
