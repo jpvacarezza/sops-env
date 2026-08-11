@@ -54,7 +54,7 @@ describe('planSync', () => {
     },
     web: {
       TRIPGENCY_API_URL: 'https://api.example.test',
-      COMING_SOON_MODE: 'true',
+      ENABLED_COUNTRIES: 'AR,CO',
       NEXT_PUBLIC_SITE_URL: 'https://example.test',
     },
     admin: {

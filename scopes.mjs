@@ -50,7 +50,11 @@ export const SCOPE_KEYS = {
   ],
   web: [
     'TRIPGENCY_API_URL',
-    'COMING_SOON_MODE',
+    // Country access gate (ADR-0021). `web` only: the API never sees an
+    // ungated visitor, since the browser reaches it through the BFF. It moves
+    // to `shared` — not duplicated into `api` — if departure-city autocomplete
+    // ever needs the same list.
+    'ENABLED_COUNTRIES',
     'LOG_LEVEL',
     // NEXT_PUBLIC_* are not parsed by the Zod schema (Next only inlines literal
     // member expressions), but they still have to reach Vercel, so they are
