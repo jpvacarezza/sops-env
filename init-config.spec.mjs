@@ -12,10 +12,26 @@ describe('renderSopsConfig', () => {
       production: [CI],
     });
 
-    expect(yaml).toContain('secrets/local\\.enc\\.yaml$');
-    expect(yaml).toContain('secrets/staging\\.enc\\.yaml$');
-    expect(yaml).toContain('secrets/production\\.enc\\.yaml$');
+    expect(yaml).toContain('secrets[/\\\\]local\\.enc\\.yaml$');
+    expect(yaml).toContain('secrets[/\\\\]staging\\.enc\\.yaml$');
+    expect(yaml).toContain('secrets[/\\\\]production\\.enc\\.yaml$');
     expect(yaml).toContain(`${DEV},${CI}`);
+  });
+
+  it('matches the file under either path separator, since sops uses the host spelling', () => {
+    // The bug this guards: with a plain `/`, sops on Windows compares against
+    // `secrets\local.enc.yaml`, finds no rule, and `sops edit` dies with
+    // `no matching creation rules found` while `-d`/`set`/`unset` still work.
+    const pattern = /path_regex: (\S+)/.exec(
+      renderSopsConfig({ local: [DEV] }),
+    );
+    const rule = new RegExp(pattern[1]);
+
+    expect(rule.test('secrets/local.enc.yaml')).toBe(true);
+    expect(rule.test('secrets\\local.enc.yaml')).toBe(true);
+    // Still anchored on both ends — a lookalike must not match.
+    expect(rule.test('secrets/local.enc.yaml.bak')).toBe(false);
+    expect(rule.test('secrets/production.enc.yaml')).toBe(false);
   });
 
   it('orders rules from the narrowest environment outward, since sops takes the first match', () => {
@@ -25,7 +41,7 @@ describe('renderSopsConfig', () => {
       production: [CI],
     });
     const order = ['local', 'staging', 'production'].map((environment) =>
-      yaml.indexOf(`secrets/${environment}`),
+      yaml.indexOf(`secrets[/\\\\]${environment}`),
     );
 
     expect(order).toEqual([...order].sort((a, b) => a - b));

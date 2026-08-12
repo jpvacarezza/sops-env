@@ -1,9 +1,15 @@
 import { spawnSync } from 'node:child_process';
 
+// The default key path is platform-dependent because sops resolves it with Go's
+// `os.UserConfigDir()`. Naming both spellings matters: a Windows key written to the
+// POSIX path is never read, and sops reports that as "no identity matched" rather
+// than as a missing file.
 const INSTALL_HINT =
-  'Install it with `brew install sops` (macOS) or from ' +
-  'https://github.com/getsops/sops/releases, then make sure your age identity is at ' +
-  '$SOPS_AGE_KEY_FILE (default ~/.config/sops/age/keys.txt).';
+  'Install it with `brew install sops` (macOS), ' +
+  '`winget install SecretsOPerationS.SOPS --version 3.9.4 --source winget` (Windows), ' +
+  'or from https://github.com/getsops/sops/releases, then make sure your age identity ' +
+  'is at $SOPS_AGE_KEY_FILE (default ~/.config/sops/age/keys.txt, or ' +
+  '%APPDATA%\\sops\\age\\keys.txt on Windows).';
 
 /**
  * Decrypt one SOPS document into a plain object.

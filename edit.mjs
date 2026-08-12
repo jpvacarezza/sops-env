@@ -34,8 +34,10 @@ export function main(argv = process.argv.slice(2)) {
 
   if (result.error?.code === 'ENOENT') {
     console.error(
-      '`sops` was not found on PATH. Install it with `brew install sops` (macOS) ' +
-        'or from https://github.com/getsops/sops/releases.',
+      '`sops` was not found on PATH. Install it with `brew install sops` (macOS), ' +
+        '`winget install SecretsOPerationS.SOPS --version 3.9.4 --source winget` ' +
+        '(Windows — reopen the terminal afterwards, PATH changes do not reach open ' +
+        'shells), or from https://github.com/getsops/sops/releases.',
     );
     return 1;
   }

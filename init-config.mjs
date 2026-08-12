@@ -54,11 +54,17 @@ export function renderSopsConfig(recipients) {
     throw new Error(`No environments given.\n${USAGE}`);
   }
 
+  // `[/\\]` and not `/`: sops matches this regex against the path in the host
+  // OS's spelling, so on Windows the candidate is `secrets\local.enc.yaml` and a
+  // forward slash never matches. The rule is then simply absent, and the failure
+  // surfaces as `no matching creation rules found` on `sops edit` — while
+  // `sops -d`, `set` and `unset` keep working, because those read the recipients
+  // from the file's own metadata and never consult creation_rules at all.
   const body = rules
     .map(
       ({ environment, keys }) =>
         `  # ${environment}\n` +
-        `  - path_regex: secrets/${environment}\\.enc\\.yaml$\n` +
+        `  - path_regex: secrets[/\\\\]${environment}\\.enc\\.yaml$\n` +
         `    age: ${keys.join(',')}`,
     )
     .join('\n');
