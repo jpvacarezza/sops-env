@@ -84,5 +84,60 @@ export const SCOPE_KEYS = {
   ],
 };
 
+/**
+ * Registry keys that no app's Zod schema validates, and why.
+ *
+ * The reason lives here rather than in a comment beside each use, because each
+ * of these already has its rationale repeated across two or three files and
+ * they drifted. `env-contract.spec.mjs` fails on a registry key that is neither
+ * in a schema nor in this map, so a new escape from validation has to be
+ * argued for in writing.
+ */
+export const UNPARSED_BY_ZOD = {
+  VENDOR_DATA_DIR:
+    'Read straight from process.env by the import scripts, which run with only ' +
+    'DATABASE_URL set and must not require the full API environment (Better Auth ' +
+    'secrets, the internal key) just to load a CSV.',
+  NEXT_PUBLIC_SITE_URL:
+    'Next only inlines literal `process.env.NEXT_PUBLIC_X` member expressions, so ' +
+    'routing it through a parser would drop the value from the client bundle. ' +
+    'Validated at its point of use instead — `lib/site-url.ts` fails production builds.',
+  NEXT_PUBLIC_GA_MEASUREMENT_ID:
+    'Same inlining constraint. Unset means gtag never loads, so there is nothing ' +
+    'to validate beyond presence.',
+  NEXT_PUBLIC_SENTRY_DSN:
+    'Same inlining constraint. Shape is checked at init by `decideDsn` in ' +
+    '@tripgency/observability, which warns and degrades to noopReporter.',
+  SENTRY_AUTH_TOKEN:
+    'Build-time only, read by packages/observability/cjs/next-config.cjs. No app ' +
+    'code reads it at runtime; a build without it skips the plugin (ADR-0008).',
+  SENTRY_ORG: 'Build-time only, alongside SENTRY_AUTH_TOKEN.',
+  SENTRY_PROJECT: 'Build-time only, alongside SENTRY_AUTH_TOKEN.',
+};
+
+/**
+ * Variables the platform sets, which is why they are absent from the registry
+ * and from every `.env.example`: writing them there would suggest an operator
+ * is supposed to set them, and syncing them would fight the platform.
+ */
+export const PLATFORM_PROVIDED = {
+  CI: 'Set by GitHub Actions.',
+  VERCEL: 'Set by Vercel on every build and deployment.',
+  VERCEL_ENV: 'Set by Vercel: production | preview | development.',
+  VERCEL_URL: 'Set by Vercel to the deployment hostname.',
+  VERCEL_GIT_COMMIT_SHA: 'Set by Vercel from the Git integration.',
+};
+
+/**
+ * Variables produced by the build from another variable, never set by hand.
+ * Documenting them as inputs would send someone to a dashboard to set a value
+ * that the build overwrites.
+ */
+export const DERIVED = {
+  NEXT_PUBLIC_WEB_BUILD_ID:
+    'Assigned by apps/web/next.config.js from VERCEL_GIT_COMMIT_SHA (or "dev"), ' +
+    'so /api/sync can spot a stale tab after a deploy.',
+};
+
 /** Environments that have a ciphertext file, matching ADR-0018. */
 export const ENVIRONMENTS = ['local', 'staging', 'production'];
