@@ -28,8 +28,8 @@ export const APP_SCOPES = {
 
 export const SCOPE_KEYS = {
   shared: [
-    // BFF→API perimeter (`x-tripgency-internal-key`). Same value in all three.
-    'TRIPGENCY_INTERNAL_API_KEY',
+    // Internal API keys are per consumer (web vs admin), not shared: a leak
+    // in one app must not mint the other app's BFF→API perimeter.
   ],
   api: [
     'DATABASE_URL',
@@ -47,9 +47,14 @@ export const SCOPE_KEYS = {
     // Read straight from `process.env` by the import scripts, never by
     // `config/env.ts` — see docs/imports/README.md. Local only.
     'VENDOR_DATA_DIR',
+    'TRIPGENCY_INTERNAL_API_KEY_WEB',
+    'TRIPGENCY_INTERNAL_API_KEY_ADMIN',
   ],
   web: [
     'TRIPGENCY_API_URL',
+    // This app's BFF→API secret. Distinct from admin's; must match
+    // `TRIPGENCY_INTERNAL_API_KEY_WEB` on the API.
+    'TRIPGENCY_INTERNAL_API_KEY',
     // Country access gate (ADR-0021). `web` only: the API never sees an
     // ungated visitor, since the browser reaches it through the BFF. It moves
     // to `shared` — not duplicated into `api` — if departure-city autocomplete
@@ -68,6 +73,9 @@ export const SCOPE_KEYS = {
   ],
   admin: [
     'TRIPGENCY_API_URL',
+    // This app's BFF→API secret. Distinct from web's; must match
+    // `TRIPGENCY_INTERNAL_API_KEY_ADMIN` on the API.
+    'TRIPGENCY_INTERNAL_API_KEY',
     'LOG_LEVEL',
     'NEXT_PUBLIC_SENTRY_DSN',
     'SENTRY_AUTH_TOKEN',

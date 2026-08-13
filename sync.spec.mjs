@@ -42,7 +42,7 @@ describe('vercelVarType', () => {
 
 describe('planSync', () => {
   const doc = {
-    shared: { TRIPGENCY_INTERNAL_API_KEY: 'k'.repeat(32) },
+    shared: {},
     api: {
       DATABASE_URL: 'postgresql://x/y',
       BETTER_AUTH_SECRET: 's'.repeat(20),
@@ -51,14 +51,18 @@ describe('planSync', () => {
       SECURITY_EVENT_IP_SALT: 't'.repeat(32),
       TRUST_PROXY: '1',
       SWAGGER_ENABLED: 'false',
+      TRIPGENCY_INTERNAL_API_KEY_WEB: 'w'.repeat(32),
+      TRIPGENCY_INTERNAL_API_KEY_ADMIN: 'a'.repeat(32),
     },
     web: {
       TRIPGENCY_API_URL: 'https://api.example.test',
+      TRIPGENCY_INTERNAL_API_KEY: 'w'.repeat(32),
       ENABLED_COUNTRIES: 'AR,CO',
       NEXT_PUBLIC_SITE_URL: 'https://example.test',
     },
     admin: {
       TRIPGENCY_API_URL: 'https://api.example.test',
+      TRIPGENCY_INTERNAL_API_KEY: 'a'.repeat(32),
     },
   };
 
@@ -74,7 +78,12 @@ describe('planSync', () => {
       'vercel/admin',
     ]);
     expect(plan[0].keys).toContain('DATABASE_URL');
-    expect(plan[0].keys).toContain('TRIPGENCY_INTERNAL_API_KEY');
+    expect(plan[0].keys).toContain('TRIPGENCY_INTERNAL_API_KEY_WEB');
+    expect(plan[0].keys).toContain('TRIPGENCY_INTERNAL_API_KEY_ADMIN');
+    expect(plan[0].keys).not.toContain('TRIPGENCY_INTERNAL_API_KEY');
+    expect(plan[1].keys).toContain('TRIPGENCY_INTERNAL_API_KEY');
+    expect(plan[1].keys).not.toContain('TRIPGENCY_INTERNAL_API_KEY_WEB');
+    expect(plan[2].keys).toContain('TRIPGENCY_INTERNAL_API_KEY');
     expect(plan[1].keys).toContain('NEXT_PUBLIC_SITE_URL');
     expect(plan[1].keys).not.toContain('DATABASE_URL');
     // The plan never carries values — logging a plan must be safe.
