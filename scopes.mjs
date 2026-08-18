@@ -42,7 +42,6 @@ export const SCOPE_KEYS = {
     'LOG_LEVEL',
     'NODE_ENV',
     'PORT',
-    'APP_VERSION',
     'SENTRY_DSN',
     // Read straight from `process.env` by the import scripts, never by
     // `config/env.ts` — see docs/imports/README.md. Local only.
@@ -134,6 +133,9 @@ export const PLATFORM_PROVIDED = {
  * that the build overwrites.
  */
 export const DERIVED = {
+  APP_VERSION:
+    'Optional test/local override for apps/api/src/config/product-version.ts; ' +
+    'deploys derive the product version from the root package.json copied into the image.',
   NEXT_PUBLIC_WEB_BUILD_ID:
     'Assigned by apps/web/next.config.js from VERCEL_GIT_COMMIT_SHA (or "dev"), ' +
     'so /api/sync can spot a stale tab after a deploy.',
