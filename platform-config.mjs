@@ -37,16 +37,20 @@ export function resolveVercelConfig(app, environment, env = process.env) {
   return { token, teamId, projectId, targets };
 }
 
+/**
+ * Both ids are per environment, because the service is too: this project holds
+ * `api.staging` and `api.production` as distinct services rather than one
+ * service spanning both environments. An environment-independent
+ * `RAILWAY_SERVICE_ID_API` therefore let a `sync production` run reuse the
+ * staging service id and exit 0 having written production values to staging —
+ * the suffix makes that a named missing variable instead.
+ */
 export function resolveRailwayConfig(environment, env = process.env) {
+  const suffix = environment === 'production' ? 'PRODUCTION' : 'STAGING';
   const token = required(env, 'RAILWAY_TOKEN');
   const projectId = required(env, 'RAILWAY_PROJECT_ID');
-  const serviceId = required(env, 'RAILWAY_SERVICE_ID_API');
-  const environmentId = required(
-    env,
-    environment === 'production'
-      ? 'RAILWAY_ENVIRONMENT_ID_PRODUCTION'
-      : 'RAILWAY_ENVIRONMENT_ID_STAGING',
-  );
+  const serviceId = required(env, `RAILWAY_SERVICE_ID_API_${suffix}`);
+  const environmentId = required(env, `RAILWAY_ENVIRONMENT_ID_${suffix}`);
   return { token, projectId, serviceId, environmentId };
 }
 
