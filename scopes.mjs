@@ -35,7 +35,16 @@ export const SCOPE_KEYS = {
     'DATABASE_URL',
     'BETTER_AUTH_SECRET',
     'BETTER_AUTH_URL',
+    // The console's own auth origin. Not a duplicate of BETTER_AUTH_URL: Better
+    // Auth derives each instance's OAuth redirect_uri from its own base, so one
+    // shared value returns every admin Google sign-in to web.
+    'BETTER_AUTH_URL_ADMIN',
     'BETTER_AUTH_TRUSTED_ORIGINS',
+    // Google OAuth client. `api` only — the client secret must never reach a
+    // Vercel front, and the browser talks to Google directly with the id, which
+    // Better Auth puts in the authorization URL it returns.
+    'GOOGLE_CLIENT_ID',
+    'GOOGLE_CLIENT_SECRET',
     'SECURITY_EVENT_IP_SALT',
     'TRUST_PROXY',
     'SWAGGER_ENABLED',
