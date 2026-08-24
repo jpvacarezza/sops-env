@@ -10,20 +10,7 @@
  * move bytes.
  */
 import { createInterface } from 'node:readline';
-
-// Spelled out rather than written as the bytes themselves: a literal 0x03 in
-// source is invisible in a diff and one stray editor pass from being lost.
-const CTRL_C = String.fromCharCode(3);
-const CTRL_D = String.fromCharCode(4);
-const DELETE = String.fromCharCode(127);
-const ESC = String.fromCharCode(27);
-
-/**
- * CSI sequences (arrows, Home/End, bracketed paste) and any other two-byte
- * escape. Built with `RegExp` so the ESC byte stays a named constant.
- */
-const ANSI = new RegExp(`${ESC}\\[[0-9;?]*[ -/]*[@-~]|${ESC}.`, 'g');
-
+import { decodeKeys } from './screen.mjs';
 /** A numbered list. One-based, because the reader types what they see. */
 export function renderMenu(items) {
   const width = String(items.length).length;
@@ -140,29 +127,30 @@ export function readHidden(
     };
 
     const onData = (chunk) => {
-      // Strip escape sequences before looking at characters. Dropping only the
-      // ESC byte is not enough: an arrow key arrives as ESC [ A, and the `[A`
-      // survived into the value — two extra asterisks the operator has no way to
-      // account for, and a secret that silently differs from what they typed.
-      // Node turns on VT input on Windows, so this is the real arrival shape.
-      for (const character of String(chunk).replace(ANSI, '')) {
-        if (character === '\r' || character === '\n') {
+      // Through `decodeKeys`, the same parser the grid navigates with. This used
+      // to strip escape sequences with a regex of its own, and dropping only the
+      // ESC byte let `[A` from an arrow key into the value — two extra asterisks
+      // the operator could not account for, and a secret that silently differed
+      // from what they typed. Two things that almost agree about terminal input
+      // is one more than this needs.
+      for (const key of decodeKeys(chunk)) {
+        if (key.name === 'enter') {
           cleanup();
           output.write('\n');
           resolve(value);
           return;
         }
 
-        // Ctrl-C and Ctrl-D. Raw mode means no signal is delivered, so this has
-        // to handle cancellation itself or the prompt cannot be escaped.
-        if (character === CTRL_C || character === CTRL_D) {
+        // Raw mode delivers no signal, so cancellation is handled here or the
+        // prompt cannot be escaped at all.
+        if (key.name === 'cancel') {
           cleanup();
           output.write('\n');
           reject(new Error('Cancelled. Nothing was written.'));
           return;
         }
 
-        if (character === DELETE || character === '\b') {
+        if (key.name === 'backspace') {
           // By code point, not by UTF-16 unit: `slice(-1)` on an astral
           // character leaves a lone surrogate behind, and the value then differs
           // from what was typed in a way nothing downstream can see.
@@ -174,10 +162,12 @@ export function readHidden(
           continue;
         }
 
-        // Whatever control bytes are left after the escape strip above.
-        if (character < ' ') continue;
+        // Arrows, Home, Tab and the rest are navigation, and a value has no use
+        // for them. `decodeKeys` has already made sure their bytes cannot arrive
+        // here as characters.
+        if (key.name !== 'char' && key.name !== 'space') continue;
 
-        value += character;
+        value += key.char;
         output.write('*');
       }
     };

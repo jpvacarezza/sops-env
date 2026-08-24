@@ -22,7 +22,6 @@ import { relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { decryptSecretsFile, INSTALL_HINT } from './decrypt.mjs';
-import { runGuided } from './guided.mjs';
 import { secretsFilePath, WORKSPACE_ROOT } from './paths.mjs';
 import { assertValidDocument } from './project.mjs';
 import { ask, parseConfirm } from './prompt.mjs';
@@ -187,10 +186,10 @@ export function writeAcrossEnvironments(
 ) {
   assertWritable({ scope, key }, { registry });
 
-  // `values` is a per-environment map, which is what the guided form produces:
-  // it asks once per environment rather than offering one value for all three,
-  // because docs/ops/secrets.md says in as many words never to reuse a staging
-  // key in production.
+  // `values` is a per-environment map, which is what the grid produces: it asks
+  // once per environment rather than offering one value for all three, because
+  // docs/ops/secrets.md says in as many words never to reuse a staging key in
+  // production.
   const valueFor = (environment) => (values ? values[environment] : value);
 
   // The preflight decrypts every target *and* validates the document each write
@@ -371,73 +370,51 @@ export async function main(
     return 1;
   }
 
-  // No arguments means the guided form: the hard part was never the syntax, it
-  // was knowing which variable lives in which scope and which environments
-  // already have it.
-  const guided = mode === 'set' && positional.length === 0;
-
-  // Without a terminal the form has nobody to ask, and the failure mode is
-  // silent: readline sees EOF, nothing is written, and the process exits 0.
-  if (guided && !process.stdin.isTTY) {
+  // This used to run a linear guided form here. `pnpm secrets` replaced it: the
+  // grid shows which variable lives in which scope and which environments have
+  // it, which was the actual difficulty, and it does not end after one write.
+  if (positional.length === 0) {
     console.error(
-      `No arguments and no terminal.\n\n${SET_USAGE}\n\nThe guided form needs a ` +
-        'terminal to ask at. In a script or a pipe, name the target and pipe ' +
-        'the value.',
+      `Nothing to write.\n\n${usage}\n\nTo pick a variable interactively, run ` +
+        '`pnpm secrets` — the grid, with the same write path underneath.',
     );
     return 1;
   }
 
   let target;
   let value = null;
-  let values = null;
 
-  if (guided) {
+  try {
+    target = parseSetArgs(argv, { usage });
+    assertWritable(target);
+  } catch (error) {
+    console.error(error.message);
+    return 1;
+  }
+
+  if (mode === 'set') {
     try {
-      const chosen = await runGuided();
-      if (!chosen) return 0;
-      target = {
-        environments: chosen.environments,
-        scope: chosen.scope,
-        key: chosen.key,
-      };
-      values = chosen.values;
-    } catch (error) {
-      console.error(error.message);
-      return 1;
-    }
-  } else {
-    try {
-      target = parseSetArgs(argv, { usage });
-      assertWritable(target);
-    } catch (error) {
-      console.error(error.message);
-      return 1;
-    }
+      const raw = await readStdin();
+      const normalized = normalizeStdin(raw);
+      value = normalized.value;
 
-    if (mode === 'set') {
-      try {
-        const raw = await readStdin();
-        const normalized = normalizeStdin(raw);
-        value = normalized.value;
-
-        if (value === '') {
-          console.error(
-            'Refusing to write an empty value. An empty string and an unset ' +
-              'variable mean different things to the schemas — several treat "" ' +
-              'as absent — so say which you meant: pipe a real value, or use ' +
-              '`pnpm secrets:unset`.',
-          );
-          return 1;
-        }
-
-        console.log(
-          `Read ${Buffer.byteLength(value, 'utf8')} bytes from stdin` +
-            (normalized.strippedNewline ? ', trailing newline stripped' : ''),
+      if (value === '') {
+        console.error(
+          'Refusing to write an empty value. An empty string and an unset ' +
+            'variable mean different things to the schemas — several treat "" ' +
+            'as absent — so say which you meant: pipe a real value, or use ' +
+            '`pnpm secrets:unset`.',
         );
-      } catch (error) {
-        console.error(error.message);
         return 1;
       }
+
+      console.log(
+        `Read ${Buffer.byteLength(value, 'utf8')} bytes from stdin` +
+          (normalized.strippedNewline ? ', trailing newline stripped' : ''),
+      );
+    } catch (error) {
+      console.error(error.message);
+      return 1;
     }
   }
 
@@ -445,7 +422,6 @@ export async function main(
     const { applied, failed } = writeAcrossEnvironments({
       ...target,
       value,
-      values,
       mode,
     });
 

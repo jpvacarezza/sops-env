@@ -67,11 +67,23 @@ export function vercelVarType(key) {
  * alone calls — so a dry-run (or a mistaken `console.log(plan)`) cannot dump
  * secret values.
  */
+/**
+ * Where one app's projection is pushed. ADR-0018: api on Railway, the two fronts
+ * on Vercel.
+ *
+ * Exported so anything that *shows* a destination reads it from the same place
+ * the sync does. A second copy of this rule elsewhere would eventually disagree
+ * with where the values actually go, which is the worst kind of wrong label.
+ */
+export function destinationFor(app) {
+  return app === 'api' ? 'railway/api' : `vercel/${app}`;
+}
+
 export function planSync(doc, { environment, apps }) {
   return apps.map((app) => {
     const env = projectEnv(doc, app);
     const keys = Object.keys(env).sort();
-    const destination = app === 'api' ? 'railway/api' : `vercel/${app}`;
+    const destination = destinationFor(app);
 
     return {
       environment,

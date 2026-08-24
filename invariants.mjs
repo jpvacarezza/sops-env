@@ -84,3 +84,38 @@ export function pairFindings(environment, results) {
         `${result.relation === 'equal' ? 'match' : 'differ'}. ${result.why}`,
     }));
 }
+
+/**
+ * Values that are obviously not real yet.
+ *
+ * A sentinel is a repo convention, so no generic tool can know it.
+ * `secrets/STAGING-PROD-CHECKLIST.md` names REPLACE_ME, and `.env.example`
+ * carries `change-me` for local placeholders.
+ */
+export const PLACEHOLDER = /REPLACE_ME|change-me/i;
+
+/** `{ scope, key }` for every value that still looks like a placeholder. */
+export function findPlaceholders(document, { pattern = PLACEHOLDER } = {}) {
+  return Object.entries(document)
+    .filter(([, entries]) => entries && typeof entries === 'object')
+    .flatMap(([scope, entries]) =>
+      Object.entries(entries)
+        .filter(([, value]) => pattern.test(String(value)))
+        .map(([key]) => ({ scope, key })),
+    );
+}
+
+export function placeholderFindings(environment, placeholders) {
+  return placeholders.map(({ scope, key }) => ({
+    code: 'placeholder',
+    severity: environment === 'local' ? 'warn' : 'error',
+    scope,
+    key,
+    environment,
+    message:
+      `${scope}.${key} in ${environment} still holds a placeholder. ` +
+      (environment === 'local'
+        ? 'Local placeholders are deliberate (secrets/README.md), so this is a note.'
+        : 'secrets/STAGING-PROD-CHECKLIST.md is the list this replaces.'),
+  }));
+}

@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { decryptSecretsFile } from './decrypt.mjs';
 import { APP_SCHEMA_FILES, readSchemaDeclarations } from './env-contract.mjs';
 import { readEnvironment } from './inventory.mjs';
-import { checkPairs, pairFindings } from './invariants.mjs';
+import { checkPairs, findPlaceholders, pairFindings } from './invariants.mjs';
 import { buildMatrix, countBySeverity } from './matrix.mjs';
 import { secretsFilePath } from './paths.mjs';
 import {
@@ -104,6 +104,12 @@ export function readDeclarations({ readFile = readFileSync } = {}) {
  */
 export function collect({
   environments,
+  // Two flags, not one. Reading the values is what the placeholder and cross-key
+  // checks need; showing a fingerprint is a display choice, and `renderShell`
+  // draws whatever fingerprints the matrix carries. Tied together, the grid could
+  // not run those checks without also putting fingerprints on screen in a mode
+  // nobody had turned on.
+  withValues = false,
   withFingerprints = false,
   decrypt = decryptSecretsFile,
   readFile = readFileSync,
@@ -116,6 +122,7 @@ export function collect({
   const meta = {};
   const fingerprints = {};
   const lookups = {};
+  const placeholders = {};
 
   for (const environment of environments) {
     const file = secretsFilePath(environment);
@@ -130,28 +137,33 @@ export function collect({
       exists: true,
       recipients: read.recipients.length,
       lastModified: read.lastModified,
-      values: withFingerprints ? 'pending' : 'not-requested',
+      values: withValues || withFingerprints ? 'pending' : 'not-requested',
     };
 
-    if (!withFingerprints) continue;
+    if (!withValues && !withFingerprints) continue;
 
     try {
       const document = decrypt(file);
 
-      fingerprints[environment] = Object.fromEntries(
-        Object.entries(document)
-          .filter(([, entries]) => entries && typeof entries === 'object')
-          .map(([scope, entries]) => [
-            scope,
-            Object.fromEntries(
-              Object.entries(entries).map(([key, value]) => [
-                key,
-                fingerprint(value),
-              ]),
-            ),
-          ]),
-      );
+      if (withFingerprints) {
+        fingerprints[environment] = Object.fromEntries(
+          Object.entries(document)
+            .filter(([, entries]) => entries && typeof entries === 'object')
+            .map(([scope, entries]) => [
+              scope,
+              Object.fromEntries(
+                Object.entries(entries).map(([key, value]) => [
+                  key,
+                  fingerprint(value),
+                ]),
+              ),
+            ]),
+        );
+      }
 
+      // Names only, never the value: a placeholder is a fact about a cell, and
+      // this object is handed to callers that must not hold plaintext.
+      placeholders[environment] = findPlaceholders(document);
       lookups[environment] = (scope, key) => document[scope]?.[key];
       meta[environment].values = 'ok';
     } catch (error) {
@@ -162,7 +174,7 @@ export function collect({
     }
   }
 
-  return { inventories, meta, fingerprints, lookups };
+  return { inventories, meta, fingerprints, lookups, placeholders };
 }
 
 /**

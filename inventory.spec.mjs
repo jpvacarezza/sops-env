@@ -145,7 +145,7 @@ describe('parseInventory', () => {
   });
 
   // A quoted key is legal YAML, and skipping it shows a variable as unset while
-  // it holds a live value — which is how the guided form offers to "add" a key
+  // it holds a live value — which is how the grid comes to offer to "add" a key
   // and overwrites it.
   it('refuses a quoted key rather than dropping it', () => {
     const quoted = ['api:', '    "DATABASE_URL": ENC[a]', ''].join('\n');

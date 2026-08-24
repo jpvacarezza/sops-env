@@ -156,13 +156,61 @@ describe('collect', () => {
     expect(fingerprints.local.api.DATABASE_URL).toHaveLength(8);
   });
 
+  // Names only. The grid colours a row from this, and a row cannot be honestly
+  // green while an environment holds a REPLACE_ME.
+  it('reports which cells hold a placeholder, without the value', () => {
+    const decrypt = () => ({
+      api: { DATABASE_URL: 'REPLACE_ME', LOG_LEVEL: 'info' },
+    });
+    const { placeholders } = collect(
+      options({ decrypt, withFingerprints: true }),
+    );
+
+    expect(placeholders.local).toEqual([{ scope: 'api', key: 'DATABASE_URL' }]);
+    expect(JSON.stringify(placeholders)).not.toContain('REPLACE_ME');
+  });
+
+  it('reports no placeholders when it was not asked to decrypt', () => {
+    expect(collect(options()).placeholders).toEqual({});
+  });
+
+  // These were one flag, and the grid needed the values for its checks. Asking
+  // for them handed it fingerprints too, and `renderShell` draws whatever the
+  // matrix carries — so every cell showed a fingerprint in a mode nobody had
+  // turned on.
+  it('reads the values without fingerprinting them', () => {
+    const decrypt = () => ({ api: { DATABASE_URL: 'REPLACE_ME' } });
+    const { fingerprints, lookups, placeholders, meta } = collect(
+      options({ decrypt, withValues: true }),
+    );
+
+    expect(fingerprints).toEqual({});
+    expect(meta.local.values).toBe('ok');
+    expect(lookups.local('api', 'DATABASE_URL')).toBe('REPLACE_ME');
+    expect(placeholders.local).toHaveLength(1);
+  });
+
+  it('decrypts once for both, when both are asked for', () => {
+    let calls = 0;
+    const decrypt = () => {
+      calls += 1;
+      return { api: { DATABASE_URL: 'x' } };
+    };
+    const { fingerprints } = collect(
+      options({ decrypt, withValues: true, withFingerprints: true }),
+    );
+
+    expect(calls).toBe(1);
+    expect(fingerprints.local.api.DATABASE_URL).toHaveLength(8);
+  });
+
   // No age key for an environment is the normal case for someone who only holds
   // the local one. The grid must stay whole, because presence never needed a key.
   it('degrades to inventory only when a value cannot be decrypted', () => {
     const decrypt = () => {
       throw new Error('no identity matched any of the recipients');
     };
-    const { inventories, meta, fingerprints, lookups } = collect(
+    const { inventories, meta, fingerprints, lookups, placeholders } = collect(
       options({ decrypt, withFingerprints: true }),
     );
 
@@ -171,6 +219,7 @@ describe('collect', () => {
     expect(inventories.local.api.keys.DATABASE_URL).toBeDefined();
     expect(fingerprints.local).toBeUndefined();
     expect(lookups.local).toBeUndefined();
+    expect(placeholders.local).toBeUndefined();
   });
 });
 

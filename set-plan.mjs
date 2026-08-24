@@ -9,7 +9,7 @@
 import { ENVIRONMENTS, SCOPE_KEYS, SCOPES } from './scopes.mjs';
 
 export const SET_USAGE = `Usage: <value on stdin> | pnpm secrets:set <environment|all> <scope> <KEY>
-       pnpm secrets:set                      (guided: needs a terminal)
+       pnpm secrets                          (the grid; needs a terminal)
 
   environment   ${ENVIRONMENTS.join(' | ')} | all
   scope         ${SCOPES.join(' | ')}

@@ -24,12 +24,23 @@ import { fileURLToPath } from 'node:url';
 
 import { decryptSecretsFile } from './decrypt.mjs';
 import { readEnvironment } from './inventory.mjs';
-import { checkPairs, pairFindings } from './invariants.mjs';
+import {
+  checkPairs,
+  findPlaceholders,
+  pairFindings,
+  PLACEHOLDER,
+  placeholderFindings,
+} from './invariants.mjs';
 import { NOT_DRIFT_WHEN_UNSET, readDeclarations } from './list.mjs';
 import { buildMatrix } from './matrix.mjs';
 import { secretsFilePath } from './paths.mjs';
 import { projectEnv } from './project.mjs';
 import { APPS, ENVIRONMENTS, SCOPE_KEYS } from './scopes.mjs';
+
+// Re-exported: the placeholder check moved to `invariants.mjs` so the grid could
+// run it without pulling in the audit's process-spawning machinery, and the audit
+// stays the one place that names everything it checks.
+export { findPlaceholders, PLACEHOLDER, placeholderFindings };
 
 export const USAGE = `Usage: pnpm secrets:audit [--no-schema] [environment...]
 
@@ -37,41 +48,6 @@ export const USAGE = `Usage: pnpm secrets:audit [--no-schema] [environment...]
 
 Exits non-zero when anything is wrong. Environments default to:
 ${ENVIRONMENTS.join(', ')}.`;
-
-/**
- * Values that are obviously not real yet.
- *
- * A sentinel is a repo convention, so no generic tool can know it.
- * `secrets/STAGING-PROD-CHECKLIST.md` names REPLACE_ME, and `.env.example`
- * carries `change-me` for local placeholders.
- */
-export const PLACEHOLDER = /REPLACE_ME|change-me/i;
-
-/** `{ scope, key }` for every value that still looks like a placeholder. */
-export function findPlaceholders(document, { pattern = PLACEHOLDER } = {}) {
-  return Object.entries(document)
-    .filter(([, entries]) => entries && typeof entries === 'object')
-    .flatMap(([scope, entries]) =>
-      Object.entries(entries)
-        .filter(([, value]) => pattern.test(String(value)))
-        .map(([key]) => ({ scope, key })),
-    );
-}
-
-export function placeholderFindings(environment, placeholders) {
-  return placeholders.map(({ scope, key }) => ({
-    code: 'placeholder',
-    severity: environment === 'local' ? 'warn' : 'error',
-    scope,
-    key,
-    environment,
-    message:
-      `${scope}.${key} in ${environment} still holds a placeholder. ` +
-      (environment === 'local'
-        ? 'Local placeholders are deliberate (secrets/README.md), so this is a note.'
-        : 'secrets/STAGING-PROD-CHECKLIST.md is the list this replaces.'),
-  }));
-}
 
 /**
  * NODE_ENV as the platform will set it, so the schema's production-only
