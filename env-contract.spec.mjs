@@ -7,6 +7,7 @@ import {
   productionSourceFiles,
   readEnvReads,
   readExampleKeys,
+  readSchemaDeclarations,
   readSchemaKeys,
 } from './env-contract.mjs';
 import {
@@ -45,6 +46,134 @@ const EnvSchema = z.object({
     // The failure mode this guards: someone reshapes a schema, the regex stops
     // matching, and every parity assertion passes against nothing.
     expect(() => readSchemaKeys('const x = 1;')).toThrow(/no keys/i);
+  });
+});
+
+describe('readSchemaDeclarations', () => {
+  it('tells required, defaulted and optional apart', () => {
+    const source = `
+const EnvSchema = z.object({
+  DATABASE_URL: z.string().min(1),
+  PORT: z.coerce.number().default(6003),
+  SENTRY_DSN: z.string().url().optional(),
+});`;
+
+    expect(readSchemaDeclarations(source)).toEqual({
+      DATABASE_URL: { presence: 'required', defaultLiteral: null },
+      PORT: { presence: 'default', defaultLiteral: '6003' },
+      SENTRY_DSN: { presence: 'optional', defaultLiteral: null },
+    });
+  });
+
+  it('agrees with readSchemaKeys about which keys exist', () => {
+    for (const file of Object.values(APP_SCHEMA_FILES)) {
+      const source = readFileSync(file, 'utf8');
+
+      expect(Object.keys(readSchemaDeclarations(source))).toEqual(
+        readSchemaKeys(source),
+      );
+    }
+  });
+
+  // Several entries describe a default in prose that they do not declare —
+  // SWAGGER_ENABLED's JSDoc says "Default false." A reader that counts those
+  // marks a required variable as safely defaulted, which is the wrong way round.
+  it('does not read a default out of a comment', () => {
+    const source = `
+const EnvSchema = z.object({
+  /** Default false. Production cannot opt in. */
+  // .default('nope')
+  SWAGGER_ENABLED: z.enum(['true', 'false']),
+});`;
+
+    expect(readSchemaDeclarations(source).SWAGGER_ENABLED.presence).toBe(
+      'required',
+    );
+  });
+
+  it('elides a computed default rather than showing half of it', () => {
+    const source = `
+const EnvSchema = z.object({
+  ORIGINS: z.string().default(defaultOrigins()),
+});`;
+
+    expect(readSchemaDeclarations(source).ORIGINS).toEqual({
+      presence: 'default',
+      defaultLiteral: null,
+    });
+  });
+
+  it('reads an empty-string default, which is not the same as no default', () => {
+    const source = `
+const EnvSchema = z.object({
+  ENABLED_COUNTRIES: z.string().default(''),
+});`;
+
+    expect(readSchemaDeclarations(source).ENABLED_COUNTRIES).toEqual({
+      presence: 'default',
+      defaultLiteral: "''",
+    });
+  });
+
+  // The last entry is bounded by the object's closing brace, because
+  // apps/api/src/config/env.ts chains object-level refinements after it.
+  it('does not let the last key absorb a trailing refinement', () => {
+    const source = `
+const EnvSchema = z
+  .object({
+    A: z.string(),
+    B: z.string(),
+  })
+  .refine((data) => data.A !== data.B, { message: 'must differ' })
+  .refine((data) => Boolean(data.A), { path: ['A'] });`;
+
+    expect(readSchemaDeclarations(source).B).toEqual({
+      presence: 'required',
+      defaultLiteral: null,
+    });
+  });
+
+  // The boundary is brace-matched, not "the first line starting with `})`".
+  // That shortcut read TRUST_PROXY correctly only because `.default()` came
+  // before its `.transform()`; reordering flipped it to `required`, and a
+  // defaulted variable then reported as a missing-required error per environment.
+  it('finds the default when a transform closes a brace before the object does', () => {
+    const source = `
+const EnvSchema = z
+  .object({
+    TRUST_PROXY: z
+      .union([z.literal('false'), z.coerce.number()])
+      .default('false')
+      .transform((value) => {
+        return value === 'false' ? false : value;
+      }),
+  })
+  .refine(() => true);`;
+
+    expect(readSchemaDeclarations(source).TRUST_PROXY).toEqual({
+      presence: 'default',
+      defaultLiteral: "'false'",
+    });
+  });
+
+  it('still finds it when the transform comes first', () => {
+    const source = `
+const EnvSchema = z
+  .object({
+    TRUST_PROXY: z
+      .union([z.literal('false'), z.coerce.number()])
+      .transform((value) => {
+        return value === 'false' ? false : value;
+      })
+      .default('false'),
+  })
+  .refine(() => true);`;
+
+    expect(readSchemaDeclarations(source).TRUST_PROXY.presence).toBe('default');
+  });
+
+  it('throws rather than reporting every variable as unvalidated', () => {
+    expect(() => readSchemaDeclarations('const x = 1;')).toThrow(/no keys/i);
   });
 });
 

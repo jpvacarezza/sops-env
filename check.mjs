@@ -1,9 +1,11 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { decryptSecretsFile } from './decrypt.mjs';
 import { projectEnv } from './project.mjs';
-import { secretsFilePath } from './paths.mjs';
+import { secretsFilePath, WORKSPACE_ROOT } from './paths.mjs';
 import { APPS, ENVIRONMENTS } from './scopes.mjs';
 
 /**
@@ -26,6 +28,103 @@ export function assertCiphertext(text, file) {
         `${file}\`) or re-encrypt with \`sops -e -i ${file}\`.`,
     );
   }
+}
+
+/** Files under `secrets/` that are tracked on purpose. */
+export const TRACKED_SECRETS_FILES = ['README.md', 'STAGING-PROD-CHECKLIST.md'];
+
+/**
+ * Entries under `secrets/` that are neither a ciphertext file nor tracked prose.
+ *
+ * By the `.gitignore` comment's own definition, everything else in that
+ * directory is a decrypted working copy, so this is the set to ask questions
+ * about. It does not decide anything by itself: a stray that git ignores is a
+ * developer mid-edit, and a stray git would take is the hole.
+ */
+export function strayEntries(entries, { environments = ENVIRONMENTS } = {}) {
+  const expected = new Set([
+    ...environments.map((environment) => `${environment}.enc.yaml`),
+    ...TRACKED_SECRETS_FILES,
+  ]);
+
+  return entries.filter((entry) => !expected.has(entry)).sort();
+}
+
+/**
+ * Whether git ignores `secrets/<entry>`: true, false, or null when git could
+ * not answer.
+ *
+ * `git check-ignore --quiet` exits 0 for ignored and 1 for not ignored; any
+ * other status, and a spawn error, mean the question went unanswered rather
+ * than answered "no".
+ */
+function gitIgnores(entry, { root = WORKSPACE_ROOT } = {}) {
+  const result = spawnSync(
+    'git',
+    ['check-ignore', '--quiet', join('secrets', entry)],
+    { cwd: root },
+  );
+
+  if (result.error) return null;
+  if (result.status === 0) return true;
+  if (result.status === 1) return false;
+  return null;
+}
+
+/**
+ * Sweep `secrets/` for plaintext the index would accept.
+ *
+ * This exists because the deny-all in `.gitignore` is followed by
+ * `!/secrets/*.enc.yaml`, and gitignore is last-match-wins: for a while that
+ * negation re-included `secrets/.decrypted~local.enc.yaml`, the exact name SOPS
+ * editor integrations write their decrypted buffer to. `checkCiphertextFiles`
+ * could not see it, because `secretsFilePath` only ever returns the three
+ * registered names — so the check that runs on every PR was blind to the one
+ * file in the directory that was neither ciphertext nor ignored.
+ *
+ * A stray git cannot classify counts as committable. For a control whose whole
+ * job is to prove nothing is exposed, "I could not tell" has to fail the same
+ * way "it is exposed" does.
+ *
+ * Runs without an age key: it reads directory entries and asks git about paths,
+ * never file contents.
+ */
+export function sweepStrayPlaintext({
+  root = WORKSPACE_ROOT,
+  entries,
+  isIgnored = (entry) => gitIgnores(entry, { root }),
+} = {}) {
+  const directory = join(root, 'secrets');
+  if (!entries && !existsSync(directory))
+    return { committable: [], ignored: [] };
+
+  // Always the full set, never the caller's subset. What is on disk does not
+  // change because you asked about one environment, and taking a subset here
+  // made `secrets:check local` report staging's and production's tracked
+  // ciphertext as committable plaintext — a false alarm of the worst kind.
+  const strays = strayEntries(entries ?? readdirSync(directory), {
+    environments: ENVIRONMENTS,
+  });
+
+  const committable = [];
+  const ignored = [];
+  for (const entry of strays) {
+    if (isIgnored(entry) === true) ignored.push(entry);
+    else committable.push(entry);
+  }
+
+  if (committable.length > 0) {
+    throw new Error(
+      `secrets/ holds ${committable.length} file(s) git would accept into the ` +
+        `index: ${committable.join(', ')}.\n` +
+        'Everything under secrets/ other than the three *.enc.yaml files, ' +
+        'README.md and STAGING-PROD-CHECKLIST.md is a decrypted working copy. ' +
+        'Delete it, or add a pattern for it to .gitignore BELOW the ' +
+        '`!/secrets/*.enc.yaml` negation — above it, the negation wins.',
+    );
+  }
+
+  return { committable, ignored };
 }
 
 /**
@@ -65,6 +164,16 @@ export function main(argv = process.argv.slice(2)) {
   const environments = requested.length > 0 ? requested : ENVIRONMENTS;
 
   try {
+    // First, because a plaintext file the index would take outranks every other
+    // finding here. Deliberately not scoped to `environments`: see the sweep.
+    const { ignored } = sweepStrayPlaintext();
+    for (const entry of ignored) {
+      console.log(
+        `Note: secrets/${entry} is a decrypted working copy. Git ignores it, ` +
+          'so it is not exposed — delete it when you are done with it.',
+      );
+    }
+
     const checked = checkCiphertextFiles({ environments });
 
     if (checked.length === 0) {

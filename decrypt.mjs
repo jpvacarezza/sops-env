@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 // `os.UserConfigDir()`. Naming both spellings matters: a Windows key written to the
 // POSIX path is never read, and sops reports that as "no identity matched" rather
 // than as a missing file.
-const INSTALL_HINT =
+export const INSTALL_HINT =
   'Install it with `brew install sops` (macOS), ' +
   '`winget install SecretsOPerationS.SOPS --version 3.9.4 --source winget` (Windows), ' +
   'or from https://github.com/getsops/sops/releases, then make sure your age identity ' +
