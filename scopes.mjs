@@ -45,6 +45,13 @@ export const SCOPE_KEYS = {
     // Better Auth puts in the authorization URL it returns.
     'GOOGLE_CLIENT_ID',
     'GOOGLE_CLIENT_SECRET',
+    // Facebook Login client. `api` only, for exactly the same reason as the
+    // Google pair above: the client secret must never reach a Vercel front.
+    // Unlike Google's, this pair is optional in production too — it is the kill
+    // switch for the provider, so requiring it would break the boot instead of
+    // turning the button off (ADR-0026).
+    'FACEBOOK_CLIENT_ID',
+    'FACEBOOK_CLIENT_SECRET',
     'SECURITY_EVENT_IP_SALT',
     'TRUST_PROXY',
     'SWAGGER_ENABLED',
