@@ -52,6 +52,10 @@ export const SCOPE_KEYS = {
     // turning the button off (ADR-0026).
     'FACEBOOK_CLIENT_ID',
     'FACEBOOK_CLIENT_SECRET',
+    // Passkey capability switch. `api` only — it decides whether the plugin is
+    // registered, and the fronts learn the answer from /v1/system-status rather
+    // than from an env var of their own.
+    'PASSKEY_ENABLED',
     'SECURITY_EVENT_IP_SALT',
     'TRUST_PROXY',
     'SWAGGER_ENABLED',
