@@ -74,6 +74,7 @@ export const SCOPE_KEYS = {
     // part of the projection.
     'NEXT_PUBLIC_SITE_URL',
     'NEXT_PUBLIC_GA_MEASUREMENT_ID',
+    'NEXT_PUBLIC_CLARITY_PROJECT_ID',
     'NEXT_PUBLIC_SENTRY_DSN',
     'SENTRY_AUTH_TOKEN',
     'SENTRY_ORG',
@@ -113,6 +114,9 @@ export const UNPARSED_BY_ZOD = {
   NEXT_PUBLIC_GA_MEASUREMENT_ID:
     'Same inlining constraint. Unset means gtag never loads, so there is nothing ' +
     'to validate beyond presence.',
+  NEXT_PUBLIC_CLARITY_PROJECT_ID:
+    'Same inlining constraint. Unset means the Clarity tag never loads and ' +
+    '`identify` never runs, so there is nothing to validate beyond presence.',
   NEXT_PUBLIC_SENTRY_DSN:
     'Same inlining constraint. Shape is checked at init by `decideDsn` in ' +
     '@tripgency/observability, which warns and degrades to noopReporter.',
