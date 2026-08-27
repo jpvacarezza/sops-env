@@ -199,6 +199,17 @@ export function createScreen({
       return painted;
     },
 
+    /**
+     * Wipe the terminal before the first grid, so leftover shell output is not
+     * sitting above a rewind that never reaches it.
+     */
+    clear() {
+      cursorTo(output, 0, 0);
+      output.write(`${ESC}[2J`);
+      cursorTo(output, 0, 0);
+      painted = 0;
+    },
+
     /** Replace the previous block with these lines. */
     paint(lines) {
       if (painted > 0) {

@@ -14,6 +14,7 @@
  */
 import { fileURLToPath } from 'node:url';
 
+import { copyToClipboard } from './clipboard.mjs';
 import { collect, NOT_DRIFT_WHEN_UNSET, readDeclarations } from './list.mjs';
 import {
   checkPairs,
@@ -39,17 +40,18 @@ import {
   renderShell,
   selectedIndex,
   visibleRows,
+  CELL_NOTICE,
 } from './shell.mjs';
 
 export const USAGE = `Usage: pnpm secrets [environment...]
 
 The grid, navigable. Needs a terminal.
 
-  ↑↓        move            ⏎  edit the variable, from the pane
+  ↑↓        move            ⏎  cell menu in the pane (set / clear / copy)
   ←→        move between the grid and the pane
   v         real values
   c         compare cells by hex fingerprint, without showing a value
-  e         only flagged    u  remove   r  reveal (from the panel below)
+  e         only flagged    r  reveal (from the panel below)
   s         sync
   ?         help            q  quit
 
@@ -104,20 +106,27 @@ export function load({ environments, withFingerprints }) {
  * in as many words never to reuse a staging key in production, and an offer to
  * do it in one keystroke is the wrong shape of convenience.
  */
-async function editRow(row, environments, { screen }) {
+async function editRow(row, environments, { screen, environment }) {
   screen.write('\n');
   screen.write(`  ${row.scope}.${row.key}\n`);
-  environments.forEach((environment, index) => {
-    const cell = row.cells[environment];
-    screen.write(
-      `    ${index + 1}) ${environment.padEnd(12)}${cell.present ? 'already set' : 'not set'}\n`,
-    );
-  });
 
-  const chosen = parseMultiChoice(
-    await ask('  environments (1,3 or all) > '),
-    environments.length,
-  ).map((index) => environments[index]);
+  let chosen;
+  if (environment) {
+    screen.write(`    ${environment}\n`);
+    chosen = [environment];
+  } else {
+    environments.forEach((name, index) => {
+      const cell = row.cells[name];
+      screen.write(
+        `    ${index + 1}) ${name.padEnd(12)}${cell.present ? 'already set' : 'not set'}\n`,
+      );
+    });
+
+    chosen = parseMultiChoice(
+      await ask('  environments (1,3 or all) > '),
+      environments.length,
+    ).map((index) => environments[index]);
+  }
 
   const values = {};
   for (const environment of chosen) {
@@ -125,7 +134,7 @@ async function editRow(row, environments, { screen }) {
     if (values[environment] === '') {
       throw new Error(
         'An empty value and an unset variable mean different things to the ' +
-          'schemas. Nothing written — use `u` to remove it instead.',
+          'schemas. Nothing written — use Clear value in the cell menu instead.',
       );
     }
   }
@@ -152,69 +161,56 @@ async function editRow(row, environments, { screen }) {
       mode: 'set',
     },
     { screen },
-  );
-}
-
-async function removeRow(row, environments, { screen }) {
-  const present = environments.filter((name) => row.cells[name].present);
-  if (present.length === 0) {
-    screen.write(`\n  ${row.scope}.${row.key} is not set anywhere.\n`);
-    return false;
-  }
-
-  screen.write(`\n  remove ${row.scope}.${row.key} from:\n`);
-  present.forEach((environment, index) => {
-    screen.write(`    ${index + 1}) ${environment}\n`);
-  });
-
-  const chosen = parseMultiChoice(
-    await ask('  environments (1,3 or all) > '),
-    present.length,
-  ).map((index) => present[index]);
-
-  if (
-    !parseConfirm(await ask(`  remove from ${chosen.join(', ')}? (y/N) > `))
-  ) {
-    screen.write('  Nothing was written.\n');
-    return false;
-  }
-
-  return applyWrite(
-    { environments: chosen, scope: row.scope, key: row.key, mode: 'unset' },
-    { screen },
-  );
+  ).changed;
 }
 
 /** The one place this file writes, so the reporting is in one place too. */
-function applyWrite(target, { screen }) {
+function applyWrite(target, { screen, quiet = false } = {}) {
   assertWritable(target);
   assertCleanSecrets();
 
   const { applied, failed } = writeAcrossEnvironments(target);
 
-  for (const entry of applied) {
-    screen.write(
-      entry.changed
-        ? `  ${entry.mode} ${entry.key} in ${entry.file}\n`
-        : `  ${entry.key} in ${entry.file} was already that; nothing changed\n`,
-    );
+  if (!quiet) {
+    for (const entry of applied) {
+      screen.write(
+        entry.changed
+          ? `  ${entry.mode} ${entry.key} in ${entry.file}\n`
+          : `  ${entry.key} in ${entry.file} was already that; nothing changed\n`,
+      );
+    }
   }
 
   if (failed) {
-    screen.write(`  failed on ${failed.environment}: ${failed.message}\n`);
-    return applied.length > 0;
+    if (!quiet) {
+      screen.write(`  failed on ${failed.environment}: ${failed.message}\n`);
+    }
+    return {
+      changed: applied.length > 0,
+      notice: `Failed on ${failed.environment}: ${failed.message}`,
+    };
   }
 
-  const stat = secretsDiffStat();
-  if (stat.length > 0) {
-    screen.write('\n  git diff -w --numstat -- secrets/\n');
-    for (const line of stat) screen.write(`    ${line}\n`);
-    screen.write(
-      '    3 3 for a changed value, 3 2 for a new key. A fourth line is another value.\n',
-    );
+  if (!quiet) {
+    const stat = secretsDiffStat();
+    if (stat.length > 0) {
+      screen.write('\n  git diff -w --numstat -- secrets/\n');
+      for (const line of stat) screen.write(`    ${line}\n`);
+      screen.write(
+        '    3 3 for a changed value, 3 2 for a new key. A fourth line is another value.\n',
+      );
+    }
   }
 
-  return applied.length > 0;
+  const changed = applied.length > 0;
+  const wrote = applied.some((entry) => entry.changed);
+  const notice = wrote
+    ? target.mode === 'unset'
+      ? CELL_NOTICE.cleared
+      : CELL_NOTICE.set
+    : CELL_NOTICE.unchanged;
+
+  return { changed, notice };
 }
 
 export async function run({
@@ -237,6 +233,7 @@ export async function run({
   }
 
   const screen = createScreen({ output, input });
+  screen.clear();
   const colors = colorSupport({ isTTY: output.isTTY });
   let values = 'none';
   // Decrypted up front, not on demand: the placeholder and pair checks need the
@@ -278,7 +275,30 @@ export async function run({
       detail: state.detail,
       pane: state.pane,
       cursor: state.cursor,
+      menu: state.menu,
     };
+  };
+
+  const writeQuietly = (target) => {
+    try {
+      return applyWrite(target, { screen, quiet: true });
+    } catch (error) {
+      return {
+        changed: false,
+        notice: String(error.message).split(/\r?\n/)[0],
+      };
+    }
+  };
+
+  const reportMenu = (result) => {
+    state = {
+      ...state,
+      menu: state.menu
+        ? { ...state.menu, draft: null, notice: result.notice }
+        : state.menu,
+    };
+    if (result.changed) reload();
+    paint();
   };
 
   /**
@@ -396,13 +416,50 @@ export async function run({
       continue;
     }
 
-    if (effect.kind === 'write' || effect.kind === 'unset') {
+    if (effect.kind === 'copy') {
+      const lookup = lookups[effect.environment];
+      const value = lookup?.(effect.row.scope, effect.row.key);
+      const notice =
+        value === undefined ? CELL_NOTICE.noCopy : CELL_NOTICE.copied;
+      if (value !== undefined) copyToClipboard(value, { output });
+      state = {
+        ...state,
+        menu: state.menu ? { ...state.menu, notice } : state.menu,
+      };
+      paint();
+      continue;
+    }
+
+    if (effect.kind === 'write' && effect.value !== undefined) {
+      const result = writeQuietly({
+        environments: [effect.environment],
+        scope: effect.row.scope,
+        key: effect.row.key,
+        values: { [effect.environment]: effect.value },
+        mode: 'set',
+      });
+      reportMenu(result);
+      continue;
+    }
+
+    if (effect.kind === 'unset' && effect.environment) {
+      const result = writeQuietly({
+        environments: [effect.environment],
+        scope: effect.row.scope,
+        key: effect.row.key,
+        mode: 'unset',
+      });
+      reportMenu(result);
+      continue;
+    }
+
+    if (effect.kind === 'write') {
       let changed = false;
       await withOwnInput(async () => {
-        changed =
-          effect.kind === 'write'
-            ? await editRow(effect.row, environments, { screen })
-            : await removeRow(effect.row, environments, { screen });
+        changed = await editRow(effect.row, environments, {
+          screen,
+          environment: effect.environment,
+        });
       });
       if (changed) reload();
       paint();

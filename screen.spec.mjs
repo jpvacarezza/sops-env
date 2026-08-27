@@ -262,6 +262,16 @@ describe('createScreen', () => {
     expect(output.text).not.toContain(`${ESC}[0J`);
   });
 
+  it('clears the whole screen on clear, so the grid starts on an empty terminal', () => {
+    const output = fakeOutput();
+    const screen = createScreen({ output });
+
+    screen.clear();
+
+    expect(output.text).toContain(`${ESC}[2J`);
+    expect(screen.painted).toBe(0);
+  });
+
   // Used before printing something that has to stay — a diff, an audit, an error.
   it('stops tracking the block on release, so the next paint lands below it', () => {
     const output = fakeOutput();

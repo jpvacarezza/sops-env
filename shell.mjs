@@ -25,11 +25,13 @@ const RESET = `${ESC}[0m`;
 
 /**
  * One tone per row state: a foreground code, and the background it uses when the
- * row is selected.
+ * row is selected and every environment agrees. Mixed selections use `celeste`
+ * instead, so the fill does not hide the disagreement the dots are showing.
  *
- * White on the tone for the selected row rather than the tone alone. The cursor
- * mark is easy to lose in a list of thirty-four; a filled bar is not, and once
- * every row is coloured the mark is no longer the only thing distinguishing one.
+ * White on the tone for a unanimous selected row rather than the tone alone. The
+ * cursor mark is easy to lose in a list of thirty-four; a filled bar is not, and
+ * once every row is coloured the mark is no longer the only thing distinguishing
+ * one.
  */
 const TONES = {
   // `fg` tints the text; `fill` is the whole SGR for a filled bar. Both spelled
@@ -39,13 +41,56 @@ const TONES = {
   green: { fg: '32', fill: '97;42' },
   yellow: { fg: '33', fill: '97;43' },
   red: { fg: '31', fill: '97;41' },
-  // Not row states. `heading` is the scope rows — blue, a colour none of the row
-  // tones use, so a heading is never read as a fourth verdict. `columns` is the
-  // line naming the columns: black on white, the one bar that is not a verdict
-  // about anything.
-  heading: { fg: '34', fill: '97;44' },
+  // Selected row when the three environments do not agree. Bright cyan, not the
+  // heading's navy: a mixed selection is not a scope divider.
+  celeste: { fg: '36', fill: '30;106' },
+  // Unselected data rows. The verdict lives in the environment cells; tinting
+  // the name to match it made every row a different colour and the list unreadable.
+  plain: { fg: '97', fill: '97;40' },
+  // The grid behind an open cell menu: grey text, no fill, so the modal is the
+  // only colour on screen.
+  muted: { fg: '90', fill: '90' },
+  // Not row states. `heading` is the scope rows — navy, a colour none of the row
+  // tones use, so a heading is never read as a fourth verdict. Standard blue
+  // (`44`) reads as celeste on the terminals this is used in; 256-colour 18 is
+  // the dark bar that still reads as blue. `columns` is the line naming the
+  // columns: black on white, the one bar that is not a verdict about anything.
+  // `white` is the cell-menu cursor, the same bar on purpose — a choice, not a
+  // verdict.
+  heading: { fg: '97', fill: '97;48;5;18' },
   columns: { fg: '30', fill: '30;107' },
+  white: { fg: '30', fill: '30;107' },
 };
+
+/** What ⏎ on a pane environment offers, in the order they are drawn. */
+export const CELL_ACTIONS = [
+  { id: 'set', label: 'Set value' },
+  { id: 'clear', label: 'Clear value' },
+  { id: 'copy', label: 'Copy value' },
+];
+/** How the focused cell is described inside the menu. */
+export const CELL_STATUS = {
+  set: 'Set in the environment',
+  unset: 'Not set in the environment',
+};
+/** What Set / Clear / Copy report inside the menu, never under the grid. */
+export const CELL_NOTICE = {
+  typeValue: 'Type the value, then Enter. Esc to cancel.',
+  empty: 'Empty value; nothing written.',
+  set: 'Set.',
+  cleared: 'Cleared.',
+  unchanged: 'Nothing changed.',
+  copied: 'Copied.',
+  noCopy: 'No readable value to copy.',
+};
+
+function newCellMenu(overrides = {}) {
+  return { selected: 0, notice: null, draft: null, ...overrides };
+}
+
+function isPrompting(menu) {
+  return typeof menu?.draft === 'string';
+}
 /** Matches an SGR sequence, for measuring what a line really occupies. */
 const SGR = new RegExp(`${ESC}\\[[0-9;]*m`, 'g');
 
@@ -86,6 +131,25 @@ function paint(text, tone, { colors, fill = false }) {
   const codes = fill ? TONES[tone].fill : TONES[tone].fg;
 
   return `${ESC}[${codes}m${text}${RESET}`;
+}
+
+/**
+ * One cell: the glyph sits on that environment's tone, the padding keeps the
+ * row's. A mixed selection is a celeste bar with three different dots; filling
+ * the whole cell would swallow the bar, and tinting the glyph would lose it
+ * inside a fill of the same colour.
+ */
+function paintCell(cellText, cell, row, { colors, fill }) {
+  if (!colors) return cellText;
+
+  const start = cellText.search(/\S/);
+  if (start === -1) return paint(cellText, row, { colors, fill });
+
+  return (
+    paint(cellText.slice(0, start), row, { colors, fill }) +
+    paint(cellText[start], cell, { colors, fill: true }) +
+    paint(cellText.slice(start + 1), row, { colors, fill })
+  );
 }
 
 /**
@@ -142,6 +206,22 @@ export function rowTone(row, environments) {
   }
 
   return 'yellow';
+}
+
+/**
+ * The fill a selected row uses.
+ *
+ * Its own tone when every environment's cell agrees, so a clean row is a green
+ * bar and a broken one is a red bar. Celeste when they do not: mixing the three
+ * into one verdict is what `rowTone` already does, and filling with that hides
+ * the disagreement the dots are there to show.
+ */
+export function selectedTone(row, environments) {
+  if (environments.length === 0) return 'celeste';
+
+  const tones = environments.map((environment) => cellTone(row, environment));
+
+  return tones.every((tone) => tone === tones[0]) ? tones[0] : 'celeste';
 }
 
 /** `"api.DATABASE_URL"` — how a row is named in state and in a finding. */
@@ -248,6 +328,7 @@ export function initialState({ matrix, environments, values = 'none' }) {
     // `environments`, so it stays valid as the grid selection moves.
     pane: 'grid',
     cursor: 0,
+    menu: null,
     revealed: null,
     message: null,
   };
@@ -309,11 +390,13 @@ const PAGE = 10;
  * One keystroke. Returns `{ state, effect }`; `effect` is null when the keystroke
  * only moved something.
  *
- * Destructive actions are only reachable from the detail panel. `u` on the grid
- * would put "remove this variable from an environment" one keystroke away from
- * the arrow keys.
+ * Clearing a cell is only reachable from the cell menu. A grid key for it would
+ * put "remove this variable from an environment" one keystroke away from the
+ * arrow keys.
  */
 export function reduce(state, key, { columns = Infinity } = {}) {
+  if (state.menu) return reduceMenu(state, key);
+
   const cleared = { ...state, message: null };
   // What `⏎` and `→` mean depends on whether the pane is actually drawn, and that
   // is a question about the terminal. Defaulting to Infinity means "assume there
@@ -357,12 +440,18 @@ export function reduce(state, key, { columns = Infinity } = {}) {
     case 'left':
       return { state: { ...cleared, pane: 'grid' }, effect: null };
 
-    // `⏎` acts on the detail, and the pane is where the detail lives. In the grid
-    // it is deliberately unused: it used to open a second copy of what the pane is
-    // already showing. Unused, but not silent — a key that does nothing without
-    // saying so is worse than one that is not bound at all.
+    // `⏎` in the pane opens a menu over the focused environment, because that
+    // keystroke already named which cell. Asking 1/2/3 again would be the same
+    // question. In the panel below there is no focused environment, so `⏎` still
+    // writes the row and the prompt asks. In the grid it is deliberately unused.
     case 'enter':
-      if (inDetail || cleared.detail) {
+      if (inDetail) {
+        return {
+          state: { ...cleared, menu: newCellMenu() },
+          effect: null,
+        };
+      }
+      if (cleared.detail) {
         return {
           state: cleared,
           effect: { kind: 'write', row: selectedRow(cleared) },
@@ -370,7 +459,10 @@ export function reduce(state, key, { columns = Infinity } = {}) {
       }
       if (pane) {
         return {
-          state: { ...cleared, message: '→ into the pane, then ⏎ to edit.' },
+          state: {
+            ...cleared,
+            message: '→ into the pane, then ⏎ for the cell menu.',
+          },
           effect: null,
         };
       }
@@ -398,6 +490,142 @@ export function reduce(state, key, { columns = Infinity } = {}) {
 
     default:
       return { state: cleared, effect: null };
+  }
+}
+
+/**
+ * The cell menu is its own mode: arrows pick an action, they do not move the
+ * grid or the pane. Escape closes it. Set collects the value inside the dialog;
+ * Clear and Copy keep it open and report there, so nothing lands under the grid.
+ */
+function reduceMenu(state, key) {
+  if (isPrompting(state.menu)) return reduceDraft(state, key);
+
+  const count = CELL_ACTIONS.length;
+  const at = (selected) => ({
+    ...state,
+    menu: { ...state.menu, selected },
+  });
+
+  switch (key.name) {
+    case 'up':
+      return {
+        state: at((state.menu.selected + count - 1) % count),
+        effect: null,
+      };
+    case 'down':
+      return {
+        state: at((state.menu.selected + 1) % count),
+        effect: null,
+      };
+    case 'enter': {
+      const action = CELL_ACTIONS[state.menu.selected];
+      const row = selectedRow(state);
+      const environment = state.environments[state.cursor];
+
+      if (action.id === 'set') {
+        return {
+          state: {
+            ...state,
+            menu: {
+              ...state.menu,
+              draft: '',
+              notice: CELL_NOTICE.typeValue,
+            },
+          },
+          effect: null,
+        };
+      }
+      const present = Boolean(row.cells[environment]?.present);
+      // The modal already says the cell is empty. Dropping to a line under the
+      // frozen grid (`is not set in production`) plus `⏎ to go back` was that
+      // same fact a second time, off the dialog.
+      if (!present && (action.id === 'clear' || action.id === 'copy')) {
+        return { state, effect: null };
+      }
+      if (action.id === 'clear') {
+        return {
+          state: {
+            ...state,
+            menu: { ...state.menu, notice: null },
+          },
+          effect: { kind: 'unset', row, environment },
+        };
+      }
+      return {
+        state: {
+          ...state,
+          menu: { ...state.menu, notice: null },
+        },
+        effect: { kind: 'copy', row, environment },
+      };
+    }
+    case 'escape':
+      return { state: { ...state, menu: null }, effect: null };
+    case 'cancel':
+      return { state, effect: { kind: 'quit' } };
+    case 'char':
+      if (key.char.toLowerCase() === 'q') {
+        return { state, effect: { kind: 'quit' } };
+      }
+      return { state, effect: null };
+    default:
+      return { state, effect: null };
+  }
+}
+
+/**
+ * Set value, typed in the dialog. The characters never echo; the footer keeps
+ * the key hints. Escape returns to the menu without writing.
+ */
+function reduceDraft(state, key) {
+  const draft = state.menu.draft;
+  const setDraft = (next, notice = CELL_NOTICE.typeValue) => ({
+    ...state,
+    menu: { ...state.menu, draft: next, notice },
+  });
+
+  switch (key.name) {
+    case 'escape':
+      return {
+        state: {
+          ...state,
+          menu: { ...state.menu, draft: null, notice: null },
+        },
+        effect: null,
+      };
+    case 'enter':
+      if (draft === '') {
+        return { state: setDraft(draft, CELL_NOTICE.empty), effect: null };
+      }
+      return {
+        state: {
+          ...state,
+          menu: { ...state.menu, draft: null, notice: null },
+        },
+        effect: {
+          kind: 'write',
+          row: selectedRow(state),
+          environment: state.environments[state.cursor],
+          value: draft,
+        },
+      };
+    case 'backspace': {
+      const points = Array.from(draft);
+      if (points.length === 0) return { state, effect: null };
+      return {
+        state: setDraft(points.slice(0, -1).join('')),
+        effect: null,
+      };
+    }
+    case 'space':
+      return { state: setDraft(`${draft} `), effect: null };
+    case 'char':
+      return { state: setDraft(`${draft}${key.char}`), effect: null };
+    case 'cancel':
+      return { state, effect: { kind: 'quit' } };
+    default:
+      return { state, effect: null };
   }
 }
 
@@ -430,15 +658,16 @@ export function needsReload(from, to) {
 export function paneVisible(state, columns) {
   if (state.values === 'value') return false;
 
-  return (
-    split({ columns, environments: state.environments, values: state.values })
-      .side > 0
-  );
-}
+  const widths = columnWidths(state.rows, { values: state.values });
 
-/** Either placement counts as the variable being open. */
-function isOpen(state, columns) {
-  return state.detail || paneVisible(state, columns);
+  return (
+    split({
+      columns,
+      environments: state.environments,
+      values: state.values,
+      ...widths,
+    }).side > 0
+  );
 }
 
 function reduceChar(state, char, columns) {
@@ -481,21 +710,9 @@ function reduceChar(state, char, columns) {
     case 's':
       return { state, effect: { kind: 'sync' } };
 
-    case 'u':
-      if (!isOpen(state, columns)) {
-        return {
-          state: {
-            ...state,
-            message:
-              'Open the variable first (⏎) — removing is not a grid key.',
-          },
-          effect: null,
-        };
-      }
-      return { state, effect: { kind: 'unset', row: selectedRow(state) } };
-
     // The pane prints the values already, so `r` has nothing left to do there. It
     // survives for the panel below, which is all a narrow terminal gets.
+    // Clearing a cell is the menu's Clear value, not a key.
     case 'r':
       if (!state.detail) {
         return {
@@ -519,8 +736,8 @@ function reduceChar(state, char, columns) {
 }
 
 export const HELP =
-  '↑↓ move (wraps) · ←→ grid/pane · ⏎ edits, from the pane · ' +
-  'u remove · r reveal one value · ' +
+  '↑↓ move (wraps) · ←→ grid/pane · ⏎ cell menu, from the pane · ' +
+  'r reveal one value · ' +
   'the pane prints the values it can read · v every value, in the grid · ' +
   'c compare by hex fingerprint, showing none · ' +
   'e only flagged rows · s sync · esc back · q quit';
@@ -529,39 +746,16 @@ export const HELP =
 // to the left of them rather than pushing the whole column across.
 const GUTTER = '    ';
 const CURSOR = '  ❯ ';
-
-// TRIPGENCY_INTERNAL_API_KEY_ADMIN is 32 characters. At 32 the schema marker
-// touched it and read as one token; the same mistake list.mjs already made once.
-const NAME_MIN = 34;
-// What the names may take beyond their minimum. Past 40 the gap between a name and
-// its schema marker is harder to follow than a truncated name would be.
-const NAME_SPARE = 6;
 const CELL_MIN = 5;
-// The widest reason there is measures 29 — `✗ required, not in production` — so 30
-// holds every one of them with a column to spare. Measured off `REASONS`, not
-// guessed: 52 was a round number and left a third of the column empty.
-const REASON_MAX = 30;
 const SIDE_GAP = 2;
-// Under this the pane stops being a table: `not validated by any schema` wraps
-// into four lines and the labels are further apart than the values.
 const SIDE_MIN = 30;
-// There is no ceiling on the pane. It holds the values now, and one DATABASE_URL is
-// past a hundred characters, so every column it gets is a column that URL does not
-// wrap over. A ceiling would only leave the slack between the grid and the pane,
-// where it does nothing but push the pane right.
-const SCHEMA_WIDTH = 14;
+/** Trailing spaces after the longest variable name, included in its width. */
+export const COLUMN_GAP = 2;
+/** Trailing spaces after the longest schema marker. */
+export const SCHEMA_GAP = 1;
+/** Why is the header plus one space — the sentence lives in the pane. */
+export const REASON_WIDTH = 4;
 
-/**
- * Column widths for the terminal we actually have.
- *
- * These were fixed constants summing to about 85 columns, so a 120- or
- * 200-column window went unused while the reason for each flag had nowhere to
- * go — the glyph was on screen and its meaning was not. Whatever is spare now
- * goes to the reason column first, and a little to the names.
- *
- * Below the minimum the grid is as narrow as it can be and still line up, and it
- * will overflow rather than start cutting names in half.
- */
 /**
  * What one cell would like, by mode.
  *
@@ -576,60 +770,81 @@ function cellWanted(values) {
 }
 
 /**
- * The widest the grid ever wants, so anything past it belongs to the pane.
+ * Name / schema / Why widths from the rows on screen, not from a spare budget.
  *
- * Without this the grid was handed every spare column, stopped growing at its own
- * caps, and the leftover sat between the last cell and the pane — pushing the pane
- * to the right edge of a wide terminal for no reason.
+ * Each content column is the longest value it has to hold (or its header, if
+ * that is wider) plus its trailing gap, so the pane gets everything the grid
+ * does not actually use. Why is a four-column flag: the sentence lives in the pane.
  */
-function gridAppetite({ environments, values }) {
+export function columnWidths(rows, { values = 'none' } = {}) {
+  let name = 'Variable'.length;
+  let schema = 'Schema'.length;
+
+  for (const row of rows ?? []) {
+    if (row.key.length > name) name = row.key.length;
+    const marker = schemaMarker(row.schema);
+    if (marker.length > schema) schema = marker.length;
+  }
+
+  return {
+    name: name + COLUMN_GAP,
+    schema: schema + SCHEMA_GAP,
+    reason: values === 'value' ? 0 : REASON_WIDTH,
+  };
+}
+
+/** The flag alone. The sentence that used to follow it is in the pane. */
+function reasonGlyph(row) {
+  if (row.severity === null) return '';
+
+  return row.severity === 'error' ? '✗' : '⚑';
+}
+
+/**
+ * The widest the grid ever wants, so anything past it belongs to the pane.
+ */
+function gridAppetite({ environments, values, name, schema, reason }) {
+  const measured = columnWidths([], { values });
+
   return (
     GUTTER.length +
-    NAME_MIN +
-    NAME_SPARE +
-    SCHEMA_WIDTH +
-    cellWanted(values) * environments.length +
-    REASON_MAX +
-    1
+    (name ?? measured.name) +
+    (schema ?? measured.schema) +
+    (reason ?? measured.reason) +
+    cellWanted(values) * environments.length
   );
 }
 
-export function layout({ columns, environments, values = 'none' }) {
+export function layout({
+  columns,
+  environments,
+  values = 'none',
+  name: nameWidth,
+  schema: schemaWidth,
+  reason: reasonWidth,
+} = {}) {
+  const measured = columnWidths([], { values });
+  const name = nameWidth ?? measured.name;
+  const schema = schemaWidth ?? measured.schema;
+  const reason = reasonWidth ?? measured.reason;
   const width = columns ?? 100;
   const count = environments.length;
-  // The flag glyph sits past the cells. Leaving it out of the arithmetic made the
-  // grid one column wider than the terminal in a band around 85, and every
-  // flagged row wrapped.
-  const base = GUTTER.length + NAME_MIN + SCHEMA_WIDTH + 1;
-
+  const base = GUTTER.length + name + schema + reason;
   const wanted = cellWanted(values);
-  // What it can have. Derived, not floored per mode: fixed per-mode minimums
-  // meant a mode simply did not fit some terminals, and the rows wrapped rather
-  // than the cells getting narrower.
   const cell = Math.max(
     CELL_MIN,
-    Math.min(wanted, Math.floor(Math.max(0, width - base) / count)),
+    Math.min(
+      wanted,
+      Math.floor(Math.max(0, width - base) / Math.max(count, 1)),
+    ),
   );
-  const spare = Math.max(0, width - base - cell * count);
-  // A reason needs about 18 columns to say anything. Below that it is a stub —
-  // `\u2717 required,\u2026` tells you less than the glyph alone — so the column goes
-  // away and the flag speaks for itself, with the full text in the detail panel.
-  // Value mode never shows one: the cells are the point there.
-  const reason =
-    values === 'value' || spare < 18 ? 0 : Math.min(REASON_MAX, spare);
-  // Whatever the reason column did not take goes to the names.
-  const name = NAME_MIN + Math.min(NAME_SPARE, Math.max(0, spare - reason));
 
   return {
     name,
-    schema: SCHEMA_WIDTH,
+    schema,
     cell,
     reason,
-    // What a row occupies, so every row can be padded to the same bar. `reason`
-    // floors at 1 because `elide(text, 0)` keeps one character — the flag glyph,
-    // which is the whole point of the column reserved for it in `base`.
-    total:
-      GUTTER.length + name + SCHEMA_WIDTH + cell * count + Math.max(reason, 1),
+    total: GUTTER.length + name + schema + cell * count + reason,
   };
 }
 
@@ -727,35 +942,156 @@ export function wrap(text, width, indent = '') {
 }
 
 /**
+ * Join items on the left with a fixed gap, then pad to `width`.
+ *
+ * Extra space stays on the right so each option keeps its own spacing instead of
+ * stretching into a bar. Painted items are measured with `visibleWidth`: padEnd
+ * on an SGR string would count the escapes as columns and the row would run past
+ * the terminal.
+ */
+export function spread(items, width, { indent = 2, separator = '  ' } = {}) {
+  const list = items.filter((item) => visibleWidth(item) > 0);
+  if (list.length === 0) return '';
+
+  let line = ' '.repeat(indent);
+  list.forEach((item, index) => {
+    line += item;
+    if (index < list.length - 1) line += separator;
+  });
+
+  const usedNow = visibleWidth(line);
+  if (usedNow < width) line += ' '.repeat(width - usedNow);
+
+  return line;
+}
+
+function footerFits(items, width, options) {
+  const list = items.filter((item) => visibleWidth(item) > 0);
+  if (list.length === 0) return true;
+
+  const { indent = 2, separator = '  ' } = options ?? {};
+  const content = list.reduce((sum, item) => sum + visibleWidth(item), 0);
+
+  return (
+    indent + content + visibleWidth(separator) * Math.max(list.length - 1, 0) <=
+    width
+  );
+}
+
+function footerGroup(items, width, options) {
+  if (items.length === 0) return [];
+  if (footerFits(items, width, options)) {
+    return [spread(items, width, options)];
+  }
+
+  const { indent = 2 } = options ?? {};
+  const pad = (line) => {
+    const used = visibleWidth(line);
+    return used < width ? line + ' '.repeat(width - used) : line;
+  };
+  const lines = [];
+  let batch = [];
+
+  for (const item of items) {
+    const trial = [...batch, item];
+    if (batch.length > 0 && !footerFits(trial, width, options)) {
+      lines.push(spread(batch, width, options));
+      batch = [];
+    }
+    if (!footerFits([item], width, options)) {
+      lines.push(...wrap(item, width, ' '.repeat(indent)).map(pad));
+      continue;
+    }
+    batch.push(item);
+  }
+
+  if (batch.length > 0) lines.push(spread(batch, width, options));
+
+  return lines;
+}
+
+/**
+ * Glyphs, tones and key hints, as two rows when they fit and three when they
+ * do not. Always sized to the terminal, not the grid: the pane sits above this
+ * chrome, and a legend truncated to the grid left a hole under the pane.
+ */
+export function renderFooter(hint, { columns = 80, colors = false } = {}) {
+  const symbols = [
+    `${MARKS.set} set`,
+    `${MARKS.unset} declared, not set`,
+    `${MARKS.absent} not declared either`,
+    '✗ error',
+    '⚑ warning',
+  ];
+  const tones = colors
+    ? [
+        `${paint('green', 'green', { colors })} all set`,
+        `${paint('yellow', 'yellow', { colors })} optional, unset`,
+        `${paint('red', 'red', { colors })} required, unset`,
+      ]
+    : [];
+  const dotted = String(hint).includes(' · ');
+  const hintItems = dotted
+    ? String(hint)
+        .split(/\s*·\s*/)
+        .filter(Boolean)
+    : [String(hint).trim()].filter(Boolean);
+  const gaps = { separator: '  ' };
+  const dots = { separator: ' · ' };
+  const packed = [...symbols, ...tones];
+
+  if (footerFits(packed, columns, gaps)) {
+    return [
+      spread(packed, columns, gaps),
+      ...footerGroup(hintItems, columns, dotted ? dots : gaps),
+    ];
+  }
+
+  return [
+    ...footerGroup(symbols, columns, gaps),
+    ...footerGroup(tones, columns, gaps),
+    ...footerGroup(hintItems, columns, dotted ? dots : gaps),
+  ];
+}
+
+/**
  * How the terminal divides between the grid and the detail pane.
  *
- * The grid's floor is built from the same constants `layout` uses, so the two
- * cannot drift: the pane only gets what is left once the grid can still draw a
- * name, a schema marker and one cell per environment.
+ * The grid keeps only what the columns actually use — longest name, longest
+ * schema marker, the Why glyph, one cell per environment — and the pane takes
+ * everything past that. Growing the name column used to push the pane right for
+ * blank space the grid did not show.
  *
  * `side: 0` means it does not fit, and `need` is what it would take. The message
  * quotes that number rather than saying "too narrow", because "too narrow for
  * what" is the only part the reader cannot work out for themselves.
  */
-export function split({ columns, environments, values = 'none' }) {
+export function split({
+  columns,
+  environments,
+  values = 'none',
+  name: nameWidth,
+  schema: schemaWidth,
+  reason: reasonWidth,
+} = {}) {
+  const measured = columnWidths([], { values });
+  const name = nameWidth ?? measured.name;
+  const schema = schemaWidth ?? measured.schema;
+  const reason = reasonWidth ?? measured.reason;
   const floor =
-    GUTTER.length +
-    NAME_MIN +
-    SCHEMA_WIDTH +
-    1 +
-    CELL_MIN * environments.length;
+    GUTTER.length + name + schema + reason + CELL_MIN * environments.length;
   const need = floor + SIDE_GAP + SIDE_MIN;
   const room = columns - floor - SIDE_GAP;
 
   if (room < SIDE_MIN) return { grid: columns, side: 0, need };
 
-  // Everything the grid does not want. `room` is the ceiling: past it the grid
-  // drops below its floor.
   const side = Math.min(
     room,
     Math.max(
       SIDE_MIN,
-      columns - SIDE_GAP - gridAppetite({ environments, values }),
+      columns -
+        SIDE_GAP -
+        gridAppetite({ environments, values, name, schema, reason }),
     ),
   );
 
@@ -765,18 +1101,17 @@ export function split({ columns, environments, values = 'none' }) {
 /**
  * Where anything in a cell starts, counted from the cell's left edge.
  *
- * Two offsets, and they differ on purpose. A **heading** starts on the second
- * column, because `PROD` is four characters and a five-wide cell has no room to
- * start it any later. A **value** starts on the third, which puts the glyph under
- * the middle of a three-letter heading rather than under its first letter.
- *
- * What matters is that each is the same in all three columns. Centring gave three
- * offsets in one grid: a lone `●` centred in five landed on the third column while
- * `● 7dc7e0…` began on the second, and `PROD` centred one column left of `DEV`. The
- * eye read them as columns that do not line up, which is what they were.
+ * A **heading** starts on the first character of the five-wide cell, so `PROD`
+ * still has one trailing space before Why instead of running into it. A **value**
+ * sits on the second character under `DEV` and `STG` (the middle letter of a
+ * three-letter heading) and on the third under `PROD`, which is the centre of
+ * that four-letter word.
  */
-const HEADING_AT = 1;
-const VALUE_AT = 2;
+const HEADING_AT = 0;
+
+function valueAt(environment) {
+  return columnLabel(environment).length >= 4 ? 2 : 1;
+}
 
 function inCell(text, width, from) {
   return ' '.repeat(from).concat(text).padEnd(width);
@@ -861,6 +1196,7 @@ export function renderShell(
   // Every width below is the grid's, not the terminal's. With the pane open they
   // differ, and a line sized to the terminal would run under the pane.
   const total = columns ?? 100;
+  const widths = columnWidths(state.rows, { values: state.values });
   const pane =
     state.values === 'value'
       ? // Value mode takes every column for the cells; a pane beside them would
@@ -870,12 +1206,14 @@ export function renderShell(
           columns: total,
           environments: state.environments,
           values: state.values,
+          ...widths,
         });
   const grid = pane.grid;
   const width = layout({
     columns: grid,
     environments: state.environments,
     values: state.values,
+    ...widths,
   });
   const lines = [];
 
@@ -924,7 +1262,7 @@ export function renderShell(
     state.environments
       .map((name) => inCell(columnLabel(name), width.cell, HEADING_AT))
       .join('') +
-    (width.reason > 0 ? '  Why' : '');
+    (width.reason > 0 ? 'Why'.padEnd(width.reason) : '');
   lines.push(
     paint(elide(head, width.total).padEnd(width.total), 'columns', {
       colors,
@@ -972,6 +1310,7 @@ export function renderShell(
     }
 
     const here = window.start + offset === index;
+    const tone = here ? selectedTone(row, state.environments) : 'plain';
     const cells = state.environments.map((environment) => {
       const cell = row.cells[environment];
       const mark = cellMarker(cell, row.declared);
@@ -980,33 +1319,40 @@ export function renderShell(
       // a sentinel. A value shown here arrives through the same closure
       // `collect` hands out, and goes no further than this string.
       const note = cellNote ? cellNote(environment, row) : cell.fingerprint;
+      const at = valueAt(environment);
+      const body = note
+        ? inCell(`${mark} ${elide(note, width.cell - at - 2)}`, width.cell, at)
+        : inCell(mark, width.cell, at);
 
-      if (!note) return inCell(mark, width.cell, VALUE_AT);
-
-      return inCell(
-        `${mark} ${elide(note, width.cell - VALUE_AT - 2)}`,
-        width.cell,
-        VALUE_AT,
-      );
+      return paintCell(body, cellTone(row, environment), tone, {
+        colors,
+        fill: here,
+      });
     });
-    const reason = elide(
-      reasonFor(row, state.environments.length),
-      width.reason,
-    );
+    const reason = reasonGlyph(row).padEnd(width.reason);
 
-    // Padded to the full grid width, so a selected row's background is one bar
-    // rather than an edge that stops wherever that row's reason text happened to.
-    const text = (
+    // Prefix and suffix are padded to the full grid width, so a selected row's
+    // background is one bar rather than an edge that stops wherever that row's
+    // reason text happened to. The cells sit in the middle, each glyph on its
+    // own tone; the padding around a glyph keeps the row fill so the bar does
+    // not punch holes around the dots.
+    const prefix =
       (here ? CURSOR : GUTTER) +
       row.key.padEnd(width.name) +
-      schemaMarker(row.schema).padEnd(width.schema) +
-      cells.join('') +
-      reason
-    ).padEnd(width.total);
+      schemaMarker(row.schema).padEnd(width.schema);
+    const pad = Math.max(
+      0,
+      width.total -
+        prefix.length -
+        width.cell * state.environments.length -
+        reason.length,
+    );
+    const suffix = reason + ' '.repeat(pad);
 
-    // Painted last, after every pad and elide has counted characters.
     lines.push(
-      paint(text, rowTone(row, state.environments), { colors, fill: here }),
+      paint(prefix, tone, { colors, fill: here }) +
+        cells.join('') +
+        paint(suffix, tone, { colors, fill: here }),
     );
   });
 
@@ -1037,27 +1383,10 @@ export function renderShell(
 
   lines.push('');
   lines.push(
-    prose(
-      `  ${MARKS.set} set   ${MARKS.unset} declared, not set   ` +
-        `${MARKS.absent} not declared either   ✗ error   ⚑ warning`,
-      grid,
-    ),
-  );
-  if (colors) {
-    // Each word in the tone it names, so the legend is the thing it describes.
-    // Kept short by hand rather than passed through `prose`: that measures
-    // `.length`, which a painted string overstates by however many escapes it
-    // carries. 62 columns, under the 71 the narrowest supported terminal has.
-    lines.push(
-      `  ${paint('green', 'green', { colors })} all set   ` +
-        `${paint('yellow', 'yellow', { colors })} optional, unset   ` +
-        `${paint('red', 'red', { colors })} required, unset`,
-    );
-  }
-  // Wrapped, not capped. A message here can be longer than a terminal — the help
-  // text always is, and `prose` was silently cutting it after the first clause.
-  lines.push(
-    ...wrap((state.message ?? hints(state, pane, total)).trim(), total, '  '),
+    ...renderFooter((state.message ?? hints(state, pane, total)).trim(), {
+      columns: total,
+      colors,
+    }),
   );
 
   if (pane.side > 0 && row) {
@@ -1068,6 +1397,20 @@ export function renderShell(
       width: pane.side,
       colors,
     });
+  }
+
+  if (state.menu && row) {
+    const gray = colors
+      ? lines.map((line) =>
+          paint(String(line).replace(SGR, ''), 'muted', { colors }),
+        )
+      : lines;
+
+    return overlayBlock(
+      gray,
+      renderCellMenu(state, row, { columns: total, colors }),
+      { columns: total, colors },
+    );
   }
 
   return lines;
@@ -1113,6 +1456,110 @@ function beside(lines, block, { at, until, grid, width, colors }) {
 }
 
 /**
+ * Draw `block` in the middle of `lines`, covering whatever was there.
+ *
+ * The sides of an overlaid row are stripped of colour: splicing SGR in the
+ * middle of a painted line is how the pane used to walk, and a modal that is
+ * supposed to be the only thing in focus does not need the grid to remain
+ * perfect underneath it.
+ */
+export function overlayBlock(
+  lines,
+  block,
+  { columns = 80, colors = false } = {},
+) {
+  if (block.length === 0) return lines;
+
+  const width = Math.max(...block.map((line) => visibleWidth(line)));
+  const left = Math.max(0, Math.floor((columns - width) / 2));
+  const top = Math.max(0, Math.floor((lines.length - block.length) / 2));
+  const restyle = (text) =>
+    colors && text.length > 0 ? paint(text, 'muted', { colors }) : text;
+
+  return lines.map((line, index) => {
+    const offset = index - top;
+    if (offset < 0 || offset >= block.length) return line;
+
+    const plain = String(line).replace(SGR, '').padEnd(columns);
+    const piece = block[offset];
+    const used = visibleWidth(piece);
+
+    return (
+      restyle(plain.slice(0, left)) + piece + restyle(plain.slice(left + used))
+    );
+  });
+}
+
+/**
+ * The cell menu: a boxed dialog with the variable name in the header.
+ *
+ * Inner width is the longest `scope.key` plus six, so the title sits in three
+ * spaces on each side when it is that longest name, and is centred when it is
+ * shorter. `Set value` is first so a bare ⏎ still means what it used to. The
+ * selected row is black on white — the same bar as the column header, a choice
+ * rather than a verdict.
+ */
+function renderCellMenu(state, row, { columns, colors }) {
+  const environment = state.environments[state.cursor];
+  const title = `${row.scope}.${row.key}`;
+  const subtitle = paneLabel(environment);
+  const status = row.cells[environment]?.present
+    ? CELL_STATUS.set
+    : CELL_STATUS.unset;
+  const notice = state.menu.notice;
+  const prompting = isPrompting(state.menu);
+  const hidden = prompting
+    ? '*'.repeat(Array.from(state.menu.draft).length)
+    : '';
+  let longest = Math.max(title.length, status.length);
+  if (notice) longest = Math.max(longest, notice.length);
+  if (hidden.length > longest) longest = hidden.length;
+
+  for (const entry of state.rows ?? []) {
+    const id = `${entry.scope}.${entry.key}`;
+    if (id.length > longest) longest = id.length;
+  }
+
+  const inner = Math.min(longest + 6, Math.max(8, columns - 2));
+  const rule = MARKS.rule.repeat(inner);
+  const empty = `│${' '.repeat(inner)}│`;
+  const centre = (value) => {
+    const shown = elide(value, Math.max(1, inner - 6));
+    const rest = inner - shown.length;
+    const left = Math.floor(rest / 2);
+
+    return ' '.repeat(left) + shown + ' '.repeat(rest - left);
+  };
+  const inset = (value) => elide(`   ${value}`, inner).padEnd(inner);
+  const option = (label, selected) => {
+    const body = inset(label);
+    return `│${
+      selected ? paint(body, 'white', { colors, fill: true }) : body
+    }│`;
+  };
+
+  return [
+    `┌${rule}┐`,
+    empty,
+    `│${centre(title)}│`,
+    empty,
+    `├${rule}┤`,
+    empty,
+    `│${inset(subtitle)}│`,
+    `│${inset(status)}│`,
+    empty,
+    ...(notice ? [`│${inset(notice)}│`] : []),
+    ...(prompting ? [`│${inset(hidden || ' ')}│`] : []),
+    ...(notice || prompting ? [empty] : []),
+    ...CELL_ACTIONS.map((action, index) =>
+      option(action.label, index === state.menu.selected),
+    ),
+    empty,
+    `└${rule}┘`,
+  ];
+}
+
+/**
  * The key hints, and the one place the pane explains itself.
  *
  * Separated by `·` rather than by runs of spaces: this line is wrapped, and `wrap`
@@ -1126,10 +1573,16 @@ function beside(lines, block, { at, until, grid, width, colors }) {
 function hints(state, pane, columns) {
   const showing = pane.side > 0;
 
+  if (state.menu) {
+    if (isPrompting(state.menu)) {
+      return 'type the value · ⏎ save · esc cancel';
+    }
+    return '↑↓ choose · ⏎ confirm · esc back · q quit';
+  }
   // The panel below comes first: once it is open, "the pane does not fit" is no
   // longer the useful thing to say — the reader already did what that message asks.
   if (state.detail) {
-    return '⏎ edit · u remove · r reveal · esc back · q quit';
+    return '⏎ edit · r reveal · esc back · q quit';
   }
   if (state.values !== 'value' && !showing) {
     return (
@@ -1138,10 +1591,10 @@ function hints(state, pane, columns) {
     );
   }
   if (state.pane === 'detail' && showing) {
-    return '↑↓ environment · ← back to the grid · ⏎ edit · c hide the values · q quit';
+    return '↑↓ environment · ← back to the grid · ⏎ cell menu · c hide the values · q quit';
   }
   if (showing) {
-    return '↑↓ move · → the pane, then ⏎ to edit · v values · c compare · e errors · s sync · q quit';
+    return '↑↓ move · → the pane, then ⏎ for the cell menu · v values · c compare · e errors · s sync · q quit';
   }
 
   // Value mode: the pane is hidden and `⏎` reaches the detail below instead.
@@ -1341,7 +1794,7 @@ function detailFacts(row) {
  * `production.api.DATABASE_URL` — set, encrypted, and holding a `REPLACE_ME` —
  * which is the one thing green must not say, and the row was already red for it.
  */
-function cellTone(row, environment) {
+export function cellTone(row, environment) {
   const cell = row.cells[environment];
   const worst = row.findings
     .filter((finding) => finding.environment === environment)

@@ -4,14 +4,25 @@ import { MARKS } from './list.mjs';
 import { buildMatrix } from './matrix.mjs';
 import {
   buildRows,
+  CELL_ACTIONS,
+  CELL_NOTICE,
+  CELL_STATUS,
+  cellTone,
   colorSupport,
+  columnWidths,
+  COLUMN_GAP,
+  SCHEMA_GAP,
+  REASON_WIDTH,
   elide,
   initialState,
   layout,
   needsReload,
+  overlayBlock,
   VALUE_MODES,
   visibleWidth,
   wrap,
+  spread,
+  renderFooter,
   reasonFor,
   isComplete,
   reduce,
@@ -20,6 +31,7 @@ import {
   rowTone,
   selectedIndex,
   selectedRow,
+  selectedTone,
   split,
   visibleRows,
 } from './shell.mjs';
@@ -100,9 +112,17 @@ const tall = (overrides = {}) => ({
 
 const press = (state, name, char) => reduce(state, { name, char });
 const chars = (state, char) => reduce(state, { name: 'char', char });
+/** The pane's `need` for this state's rows, so tests do not hard-code a floor. */
+const paneNeed = (state) =>
+  split({
+    columns: 200,
+    environments: state.environments,
+    values: state.values,
+    ...columnWidths(state.rows, { values: state.values }),
+  }).need;
 // The pane is drawn whenever there is room, so "no pane" means a terminal too
-// narrow for one: 95 columns with these two environments.
-const NARROW = 88;
+// narrow for one. Measured columns put that floor around seventy, not ninety-five.
+const NARROW = 50;
 const pressIn = (state, name, columns) => reduce(state, { name }, { columns });
 const charsIn = (state, char, columns) =>
   reduce(state, { name: 'char', char }, { columns });
@@ -299,11 +319,148 @@ describe('the errors filter', () => {
 describe('opening and editing', () => {
   const inPane = () => press(start(), 'right').state;
 
-  it('asks for a write from the pane, naming the row', () => {
-    const { effect } = press(inPane(), 'enter');
+  it('opens the cell menu from the pane, defaulting to set', () => {
+    const { state, effect } = press(inPane(), 'enter');
 
-    expect(effect.kind).toBe('write');
-    expect(effect.row.key).toBe('A_REQ');
+    expect(effect).toBeNull();
+    expect(state.menu).toEqual({
+      selected: 0,
+      notice: null,
+      draft: null,
+    });
+    expect(CELL_ACTIONS.map((action) => action.label)).toEqual([
+      'Set value',
+      'Clear value',
+      'Copy value',
+    ]);
+  });
+
+  it('asks for the value inside the menu when set is confirmed', () => {
+    const opened = press(inPane(), 'enter').state;
+    const { effect, state } = press(opened, 'enter');
+
+    expect(effect).toBeNull();
+    expect(state.menu).toEqual({
+      selected: 0,
+      notice: CELL_NOTICE.typeValue,
+      draft: '',
+    });
+  });
+
+  it('writes the focused environment once the value is typed', () => {
+    const prompting = press(press(inPane(), 'enter').state, 'enter').state;
+    const typed = chars(prompting, 's').state;
+    const { effect, state } = press(typed, 'enter');
+
+    expect(state.menu).toMatchObject({ selected: 0, draft: null });
+    expect(effect).toMatchObject({
+      kind: 'write',
+      row: { key: 'A_REQ' },
+      environment: 'local',
+      value: 's',
+    });
+  });
+
+  it('keeps the value case and spaces, and does not quit on q while typing', () => {
+    const prompting = press(press(inPane(), 'enter').state, 'enter').state;
+    const typed = press(
+      chars(chars(prompting, 'q').state, 'Q').state,
+      'space',
+      ' ',
+    ).state;
+
+    expect(chars(prompting, 'q').effect).toBeNull();
+    expect(typed.menu.draft).toBe('qQ ');
+  });
+
+  it('refuses an empty value without leaving the prompt', () => {
+    const prompting = press(press(inPane(), 'enter').state, 'enter').state;
+    const { effect, state } = press(prompting, 'enter');
+
+    expect(effect).toBeNull();
+    expect(state.menu).toEqual({
+      selected: 0,
+      notice: CELL_NOTICE.empty,
+      draft: '',
+    });
+  });
+
+  it('returns to the menu without writing when the prompt is escaped', () => {
+    const prompting = press(press(inPane(), 'enter').state, 'enter').state;
+    const typed = chars(prompting, 'x').state;
+    const { effect, state } = press(typed, 'escape');
+
+    expect(effect).toBeNull();
+    expect(state.menu).toEqual({
+      selected: 0,
+      notice: null,
+      draft: null,
+    });
+  });
+
+  it('clears on the second option and copies on the third', () => {
+    const opened = press(inPane(), 'enter').state;
+
+    const cleared = press(press(opened, 'down').state, 'enter');
+    expect(cleared.effect).toMatchObject({
+      kind: 'unset',
+      environment: 'local',
+    });
+    expect(cleared.state.menu).toMatchObject({ selected: 1 });
+
+    const copied = press(
+      press(press(opened, 'down').state, 'down').state,
+      'enter',
+    );
+    expect(copied.effect).toMatchObject({
+      kind: 'copy',
+      environment: 'local',
+    });
+    expect(copied.state.menu).toMatchObject({ selected: 2 });
+  });
+
+  it('keeps the menu open when the cell is empty, instead of writing below', () => {
+    const onStaging = press(inPane(), 'down').state;
+    const opened = press(onStaging, 'enter').state;
+
+    expect(press(press(opened, 'down').state, 'enter')).toEqual({
+      state: expect.objectContaining({
+        menu: expect.objectContaining({ selected: 1 }),
+      }),
+      effect: null,
+    });
+    expect(
+      press(press(press(opened, 'down').state, 'down').state, 'enter'),
+    ).toEqual({
+      state: expect.objectContaining({
+        menu: expect.objectContaining({ selected: 2 }),
+      }),
+      effect: null,
+    });
+  });
+
+  it('names the environment the pane cursor is on, not the first one', () => {
+    const focused = press(inPane(), 'down').state;
+    const prompting = press(press(focused, 'enter').state, 'enter').state;
+    const { effect } = press(chars(prompting, 'x').state, 'enter');
+
+    expect(effect.environment).toBe('staging');
+  });
+
+  it('closes the menu on escape without writing', () => {
+    const opened = press(inPane(), 'enter').state;
+    const { state, effect } = press(opened, 'escape');
+
+    expect(effect).toBeNull();
+    expect(state.menu).toBeNull();
+    expect(state.pane).toBe('detail');
+  });
+
+  it('does not move the pane cursor while the menu is open', () => {
+    const opened = press(inPane(), 'enter').state;
+
+    expect(press(opened, 'down').state.cursor).toBe(0);
+    expect(press(opened, 'down').state.menu.selected).toBe(1);
   });
 
   // It used to open a second copy of what the pane is already showing. Unused, but
@@ -314,6 +471,7 @@ describe('opening and editing', () => {
 
     expect(effect).toBeNull();
     expect(state.detail).toBe(false);
+    expect(state.menu).toBeNull();
     expect(state.message).toMatch(/→ into the pane/);
   });
 
@@ -351,17 +509,11 @@ describe('opening and editing', () => {
 });
 
 describe('the destructive keys', () => {
-  // Neither is a bare grid key: with no detail visible they would put "remove this
-  // variable" one keystroke from the arrow keys.
-  it.each(['u', 'r'])('says why when no detail is open: %s', (char) => {
-    const { state, effect } = charsIn(start(), char, NARROW);
+  it('says why when r is pressed with no detail open', () => {
+    const { state, effect } = charsIn(start(), 'r', NARROW);
 
     expect(effect).toBeNull();
     expect(state.message).toMatch(/Open the variable first/);
-  });
-
-  it('removes with the pane open', () => {
-    expect(chars(start(), 'u').effect).toMatchObject({ kind: 'unset' });
   });
 
   // The pane prints the values already, so `r` has nothing left to do there.
@@ -370,14 +522,6 @@ describe('the destructive keys', () => {
 
     expect(effect).toBeNull();
     expect(state.message).toMatch(/already shows the values/);
-  });
-
-  it('removes from the panel below too', () => {
-    const opened = pressIn(start(), 'enter', NARROW).state;
-
-    expect(charsIn(opened, 'u', NARROW).effect).toMatchObject({
-      kind: 'unset',
-    });
   });
 });
 
@@ -438,6 +582,11 @@ describe('the other keys', () => {
 
   // Retired keys, pinned: the next person to reach for one should get nothing
   // rather than a surprise.
+  it('no longer binds u for removing', () => {
+    expect(chars(start(), 'u').effect).toBeNull();
+    expect(chars(start(), 'u').state.message).toBeNull();
+  });
+
   it('no longer binds p for comparing', () => {
     expect(chars(start(), 'p').effect).toBeNull();
   });
@@ -465,31 +614,73 @@ describe('the other keys', () => {
   });
 });
 
+describe('columnWidths', () => {
+  it('is the longest name plus two spaces, and the longest schema plus one', () => {
+    const widths = columnWidths([
+      {
+        key: 'TRIPGENCY_INTERNAL_API_KEY_ADMIN',
+        schema: { presence: 'required' },
+      },
+      {
+        key: 'PORT',
+        schema: { presence: 'default', defaultLiteral: "'6003'" },
+      },
+    ]);
+
+    expect(widths.name).toBe(
+      'TRIPGENCY_INTERNAL_API_KEY_ADMIN'.length + COLUMN_GAP,
+    );
+    expect(widths.schema).toBe("def('6003')".length + SCHEMA_GAP);
+    expect(widths.reason).toBe(REASON_WIDTH);
+  });
+
+  it('never shrinks below the header labels', () => {
+    expect(
+      columnWidths([{ key: 'A', schema: { presence: 'required' } }]),
+    ).toEqual({
+      name: 'Variable'.length + COLUMN_GAP,
+      schema: 'Schema'.length + SCHEMA_GAP,
+      reason: REASON_WIDTH,
+    });
+  });
+
+  it('drops Why in value mode', () => {
+    expect(columnWidths([], { values: 'value' }).reason).toBe(0);
+  });
+});
+
 describe('layout', () => {
   const at = (columns, values = 'none') =>
     layout({ columns, environments: ENVIRONMENTS_THREE, values });
 
-  // The widest reason there is measures 29 — `✗ required, not in production` — so
-  // the cap is 30. It was 52, a round number that left a third of the column empty.
-  it('spends a wide terminal on the reason column, up to what one needs', () => {
-    expect(at(70).reason).toBe(0);
-    expect(at(90).reason).toBeGreaterThan(20);
-    expect(at(200).reason).toBe(30);
+  it('keeps Why to four columns, not the sentence', () => {
+    expect(at(70).reason).toBe(REASON_WIDTH);
+    expect(at(200).reason).toBe(REASON_WIDTH);
+    expect(at(200, 'value').reason).toBe(0);
   });
 
-  // `✗ required,…` tells a reader less than the glyph alone does.
-  it('drops the reason column rather than leaving a stub', () => {
-    expect(at(69).reason).toBe(0);
-    expect(at(86).reason).toBeGreaterThanOrEqual(18);
+  it('does not grow the name column on a wide terminal', () => {
+    expect(at(86).name).toBe('Variable'.length + COLUMN_GAP);
+    expect(at(200).name).toBe('Variable'.length + COLUMN_GAP);
   });
 
-  it('gives the names whatever the reason column did not take', () => {
-    expect(at(86).name).toBe(34);
-    expect(at(200).name).toBe(40);
+  it('sizes a long key plus two spaces, even on a wide terminal', () => {
+    const widths = columnWidths([
+      {
+        key: 'TRIPGENCY_INTERNAL_API_KEY_ADMIN',
+        schema: { presence: 'required' },
+      },
+    ]);
+    const wide = layout({
+      columns: 200,
+      environments: ENVIRONMENTS_THREE,
+      ...widths,
+    });
+
+    expect(wide.name).toBe(32 + COLUMN_GAP);
+    expect(wide.schema).toBe('Schema'.length + SCHEMA_GAP);
   });
 
-  // A cell in the default view holds one glyph, and every column past the fifth
-  // was blank.
   it('holds the default cells at five columns, whatever the terminal', () => {
     for (const columns of [71, 90, 120, 240]) expect(at(columns).cell).toBe(5);
   });
@@ -499,22 +690,18 @@ describe('layout', () => {
     expect(at(160, 'none').cell).toBe(5);
   });
 
-  // The cells are the point in value mode: a truncated secret is worth less the
-  // shorter it is, and nothing else on the row earns the space.
   it('spends the whole terminal on the cells in value mode', () => {
     const wide = at(200, 'value');
 
     expect(wide.reason).toBe(0);
-    expect(wide.name).toBe(34);
     expect(wide.cell).toBeGreaterThan(40);
   });
 
-  // Fixed per-mode minimums meant a mode simply did not fit some terminals, and
-  // the rows wrapped rather than the cells getting narrower.
   it('narrows the cells rather than overflowing, in every mode', () => {
     for (const mode of VALUE_MODES) {
       const narrow = at(71, mode);
-      const total = 4 + narrow.name + narrow.schema + narrow.cell * 3 + 1;
+      const total =
+        4 + narrow.name + narrow.schema + narrow.cell * 3 + narrow.reason;
 
       expect(total).toBeLessThanOrEqual(71);
     }
@@ -524,39 +711,44 @@ describe('layout', () => {
 describe('split', () => {
   const at = (columns, environments = ENVIRONMENTS_THREE) =>
     split({ columns, environments });
+  const empty = columnWidths([]);
+  const floor =
+    4 +
+    empty.name +
+    empty.schema +
+    empty.reason +
+    5 * ENVIRONMENTS_THREE.length;
+  const need = floor + 2 + 30;
 
-  // 4 gutter + 34 name + 14 schema + 1 flag + 5 per cell = 68, plus a 2 gap and the
-  // pane's own 30. The floor is built from the constants `layout` uses.
   it('needs the grid floor plus a gap plus the pane', () => {
-    expect(at(120).need).toBe(100);
-    expect(at(100).side).toBe(30);
-    expect(at(99).side).toBe(0);
+    expect(at(120).need).toBe(need);
+    expect(at(need).side).toBe(30);
+    expect(at(need - 1).side).toBe(0);
   });
 
   it('leaves the grid whole when the pane does not fit', () => {
-    expect(at(99)).toMatchObject({ grid: 99, side: 0 });
+    expect(at(need - 1)).toMatchObject({ grid: need - 1, side: 0 });
   });
 
-  // The grid stops at what it wants — 104 with three environments — and the rest is
-  // the pane's. Slack left on the grid would only sit between the last cell and the
-  // pane, pushing the pane right for nothing.
+  // The grid stays at what the columns actually use, and the rest is the pane's.
+  // Slack left on the grid would only sit between the last cell and the pane.
   it('gives the pane everything the grid does not want', () => {
-    expect(at(140)).toMatchObject({ grid: 104, side: 34 });
-    expect(at(200)).toMatchObject({ grid: 104, side: 94 });
-    expect(at(240)).toMatchObject({ grid: 104, side: 134 });
+    expect(at(140)).toMatchObject({ grid: floor, side: 140 - floor - 2 });
+    expect(at(200)).toMatchObject({ grid: floor, side: 200 - floor - 2 });
+    expect(at(240)).toMatchObject({ grid: floor, side: 240 - floor - 2 });
   });
 
   it('never takes the grid below its floor', () => {
-    for (let columns = 100; columns <= 240; columns += 1) {
-      expect(at(columns).grid).toBeGreaterThanOrEqual(68);
+    for (let columns = need; columns <= 240; columns += 1) {
+      expect(at(columns).grid).toBeGreaterThanOrEqual(floor);
       expect(at(columns).grid + at(columns).side + 2).toBe(columns);
     }
   });
 
   // One more environment is one more cell the grid cannot give up.
   it('asks for more when there are more environments', () => {
-    expect(at(120, ['local', 'staging']).need).toBe(95);
-    expect(at(120, [...ENVIRONMENTS_THREE, 'preview']).need).toBe(105);
+    expect(at(120, ['local', 'staging']).need).toBe(need - 5);
+    expect(at(120, [...ENVIRONMENTS_THREE, 'preview']).need).toBe(need + 5);
   });
 
   // Comparing needs thirteen columns a cell where the default view needs five, so
@@ -569,6 +761,25 @@ describe('split', () => {
         values: 'fingerprint',
       }).grid,
     ).toBeGreaterThan(at(200).grid);
+  });
+
+  it('grows Variable and Schema with the rows, not the terminal', () => {
+    const widths = columnWidths([
+      {
+        key: 'TRIPGENCY_INTERNAL_API_KEY_ADMIN',
+        schema: { presence: 'required' },
+      },
+    ]);
+    const wide = split({
+      columns: 200,
+      environments: ENVIRONMENTS_THREE,
+      ...widths,
+    });
+
+    expect(wide.grid).toBe(
+      4 + widths.name + widths.schema + widths.reason + 5 * 3,
+    );
+    expect(wide.side).toBe(200 - wide.grid - 2);
   });
 });
 
@@ -650,9 +861,15 @@ describe('the pane at the side', () => {
   // well would mean opening the same information twice to act on it.
   it('treats the pane as the variable being open', () => {
     const inPane = press(opened(), 'right').state;
+    const menu = press(inPane, 'enter').state;
 
-    expect(press(inPane, 'enter').effect).toMatchObject({ kind: 'write' });
-    expect(chars(opened(), 'u').effect).toMatchObject({ kind: 'unset' });
+    expect(menu.menu).toEqual({
+      selected: 0,
+      notice: null,
+      draft: null,
+    });
+    expect(press(menu, 'enter').state.menu.draft).toBe('');
+    expect(chars(opened(), 'u').effect).toBeNull();
   });
 
   // What replaced `r`: the values are simply there, one under each environment.
@@ -728,7 +945,11 @@ describe('the pane at the side', () => {
         .split('')
         .filter((character) => character === MARKS.rule).length;
 
-    const { side } = split({ columns: 140, environments: ENVS });
+    const { side } = split({
+      columns: 140,
+      environments: ENVS,
+      ...columnWidths(opened().rows),
+    });
 
     expect(ruleRun()).toBeLessThanOrEqual(140 - side - 2);
     // Past its appetite the grid stops growing and the pane takes the rest, so a
@@ -795,14 +1016,15 @@ describe('the pane at the side', () => {
   // "Too narrow for what" is the only part a reader cannot work out by looking, so
   // the message carries both numbers.
   it('says what it would need when it does not fit', () => {
-    const narrow = renderShell(opened(), { columns: 90 }).join(' ');
+    const need = paneNeed(opened());
+    const narrow = renderShell(opened(), { columns: need - 1 }).join(' ');
 
-    expect(narrow).toContain('needs 95 columns');
-    expect(narrow).toContain('has 90');
+    expect(narrow).toContain(`needs ${need} columns`);
+    expect(narrow).toContain(`has ${need - 1}`);
   });
 
   it('draws no pane at all when it does not fit', () => {
-    expect(renderShell(opened(), { columns: 90 }).join('\n')).not.toContain(
+    expect(renderShell(opened(), { columns: NARROW }).join('\n')).not.toContain(
       'api.A_REQ',
     );
   });
@@ -831,9 +1053,11 @@ describe('the pane at the side', () => {
   // Value mode and a narrow terminal are the two conditions, and the message only
   // makes sense for the second: value mode is a choice the reader just made.
   it('explains itself only when the terminal is the reason', () => {
-    expect(drawn(opened(), { columns: NARROW })).toContain('needs 95 columns');
+    expect(drawn(opened(), { columns: NARROW })).toContain(
+      `needs ${paneNeed(opened())} columns`,
+    );
     expect(drawn({ ...opened(), values: 'value' })).not.toContain(
-      'needs 95 columns',
+      'The detail pane needs',
     );
   });
 
@@ -953,6 +1177,14 @@ describe('the pane at the side', () => {
     expect(legend[0]).not.toContain('registry');
   });
 
+  it('draws the footer across the whole terminal, not just the grid', () => {
+    const legend = renderShell(opened(), wide).find((line) =>
+      line.includes('declared, not set'),
+    );
+
+    expect(visibleWidth(legend)).toBe(wide.columns);
+  });
+
   it('fills the focused environment in that cell own tone', () => {
     const inPane = press(opened(), 'right').state;
     const painted = renderShell(inPane, { columns: 140, colors: true });
@@ -1053,6 +1285,49 @@ describe('wrap', () => {
         expect(line.length).toBeLessThanOrEqual(width);
       }
     }
+  });
+});
+
+describe('spread', () => {
+  it('packs items on the left with a fixed gap and pads the rest', () => {
+    const line = spread(['aa', 'bb'], 10);
+
+    expect(line).toBe('  aa  bb  ');
+    expect(visibleWidth(line)).toBe(10);
+  });
+
+  it('keeps the same gap when there is leftover width', () => {
+    const packed = spread(['aa', 'bb', 'cc'], 20);
+
+    expect(packed.startsWith('  aa  bb  cc')).toBe(true);
+    expect(packed.indexOf('bb') - packed.indexOf('aa')).toBe(4);
+  });
+});
+
+describe('renderFooter', () => {
+  const hint =
+    '↑↓ move · → the pane, then ⏎ for the cell menu · v values · c compare · e errors · s sync · q quit';
+
+  it('packs glyphs and tones onto two rows on a wide terminal', () => {
+    const rows = renderFooter(hint, { columns: 160, colors: true });
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain('declared, not set');
+    expect(rows[0]).toContain('all set');
+    expect(rows[1]).toContain('q quit');
+    expect(visibleWidth(rows[0])).toBe(160);
+    expect(visibleWidth(rows[1])).toBe(160);
+  });
+
+  it('splits onto three rows when the packed legend does not fit', () => {
+    const rows = renderFooter(hint, { columns: 100, colors: true });
+
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toContain('declared, not set');
+    expect(rows[0]).not.toContain('all set');
+    expect(rows[1]).toContain('all set');
+    expect(rows[2]).toContain('q quit');
+    for (const row of rows) expect(visibleWidth(row)).toBe(100);
   });
 });
 
@@ -1280,6 +1555,20 @@ describe('rowTone', () => {
   });
 });
 
+describe('selectedTone', () => {
+  const rows = buildRows(MATRIX);
+  const at = (key) => rows.find((row) => row.key === key);
+
+  it('is the shared cell tone when every environment agrees', () => {
+    expect(selectedTone(at('A_DEF'), ENVS)).toBe('green');
+    expect(selectedTone(at('A_OPT'), ENVS)).toBe('yellow');
+  });
+
+  it('is celeste when the environments disagree', () => {
+    expect(selectedTone(at('A_REQ'), ENVS)).toBe('celeste');
+  });
+});
+
 describe('renderShell', () => {
   // This block measures the grid, and the pane is drawn whenever there is room for
   // one — so it renders at a width that has none. The pane has its own block, which
@@ -1313,13 +1602,15 @@ describe('renderShell', () => {
     expect(text(start())).toContain('web → vercel/web');
   });
 
-  it('flags the error row and the warning row differently', () => {
+  it('flags the error row and the warning row differently, without the sentence', () => {
     const body = lines(start());
     const errorRow = body.find((line) => line.includes('A_REQ'));
     const warnRow = body.find((line) => line.includes('A_OPT'));
 
     expect(errorRow).toContain('✗');
     expect(warnRow).toContain('⚑');
+    expect(errorRow).not.toContain('required, not in');
+    expect(warnRow).not.toContain('declared, never set');
   });
 
   it('shows the schema marker, which is what makes an unset cell readable', () => {
@@ -1329,14 +1620,20 @@ describe('renderShell', () => {
   });
 
   it('counts errors and warnings in the header', () => {
-    expect(text(start(), { counts: { error: 1, warn: 1 } })).toContain(
-      '1 error(s) · 1 warning(s)',
-    );
+    expect(
+      text(start(), {
+        counts: { error: 1, warn: 1 },
+        columns: paneNeed(start()) - 1,
+      }),
+    ).toContain('1 error(s) · 1 warning(s)');
   });
 
   it('changes the key hints when the detail is open', () => {
-    expect(text(start())).toContain('needs 95 columns');
+    expect(text(start())).toContain(`needs ${paneNeed(start())} columns`);
     expect(text(pressIn(start(), 'enter', NARROW).state)).toContain('⏎ edit');
+    expect(text(pressIn(start(), 'enter', NARROW).state)).not.toContain(
+      'u remove',
+    );
   });
 
   // Wrapped across lines rather than printed on one: the messages run past 200
@@ -1486,31 +1783,42 @@ describe('renderShell', () => {
       ]),
     );
 
-    // A_REQ is the selected row, so it carries a background rather than a
-    // foreground — same tone, read differently.
-    expect(tones.A_REQ).toContain(`${ESC}[97;41m`);
-    expect(tones.A_OPT).toContain(`${ESC}[33m`);
-    expect(tones.A_DEF).toContain(`${ESC}[32m`);
-    expect(tones.W_REQ).toContain(`${ESC}[32m`);
+    // A_REQ is mixed — green in local, red in staging — so the selected fill
+    // is celeste rather than the row's red verdict. Unselected rows stay white;
+    // the verdict is in the environment cells, not in the name.
+    expect(tones.A_REQ).toContain(`${ESC}[30;106m`);
+    expect(tones.A_OPT).toContain(`${ESC}[97m`);
+    expect(tones.A_DEF).toContain(`${ESC}[97m`);
+    expect(tones.W_REQ).toContain(`${ESC}[97m`);
+  });
+
+  it("sits each environment glyph on that cell's own tone", () => {
+    const mixed = gridRows({ colors: true }).find((line) =>
+      line.includes('A_REQ'),
+    );
+
+    expect(mixed).toContain(`${ESC}[97;42m${MARKS.set}`);
+    expect(mixed).toContain(`${ESC}[97;41m${MARKS.unset}`);
   });
 
   // Once every row is coloured, the cursor mark is no longer the only thing
   // telling them apart, so the selected one is filled instead of tinted.
   it('fills the selected row and only that one', () => {
-    const filled = gridRows({ colors: true }).filter((line) =>
-      line.includes(`${ESC}[97;`),
-    );
+    const filled = gridRows({ colors: true }).filter((line) => {
+      const start = line.slice(0, 12);
+      return start.includes(`${ESC}[97;`) || start.includes(`${ESC}[30;106m`);
+    });
 
     expect(filled).toHaveLength(1);
     expect(filled[0]).toContain('A_REQ');
   });
 
-  it('moves the fill with the cursor, keeping that row own tone', () => {
+  it("moves the fill with the cursor, keeping a unanimous row's own tone", () => {
     const onGreen = lines(press(start(), 'down').state, {
       colors: true,
     }).find((line) => line.includes('A_DEF'));
 
-    expect(onGreen).toContain(`${ESC}[97;42m`);
+    expect(onGreen.startsWith(`${ESC}[97;42m`)).toBe(true);
   });
 
   // A background that stops where the reason text did looks like a rendering
@@ -1638,12 +1946,12 @@ describe('renderShell', () => {
 
   // The scope row divides the grid into groups, so the whole line is the divider —
   // unlike the column names, which are filled per word.
-  it('fills the scope row edge to edge, in the heading blue', () => {
+  it('fills the scope row edge to edge, in the heading navy', () => {
     const scopeRow = lines(start(), { colors: true }).find((line) =>
       line.includes('→'),
     );
 
-    expect(scopeRow.startsWith(`${ESC}[97;44m`)).toBe(true);
+    expect(scopeRow.startsWith(`${ESC}[97;48;5;18m`)).toBe(true);
     expect(scopeRow.endsWith(RESET)).toBe(true);
     expect(scopeRow).toContain('api → railway/api');
   });
@@ -1677,29 +1985,59 @@ describe('renderShell', () => {
     expect(text(start(), { colors: false })).not.toContain('all set');
   });
 
-  // Centring gave three offsets in one grid: a lone `●` centred in five landed on
-  // the third column, `● 7dc7e0…` began on the second, and `PROD` at four characters
-  // centred one column left of `DEV`. The eye read them as columns that do not line
-  // up, which is what they were. Two offsets now, each the same in all three.
+  // Glyphs sit on the second character under DEV/STG. PROD is the exception:
+  // four letters, so the same offset would sit under R rather than the centre.
   it('starts every heading and every value on its own fixed column', () => {
     const painted = lines(start(), { colors: false });
     const head = painted.find((line) => line.includes('Variable'));
     const row = painted.find((line) => line.includes('A_DEF'));
-    const width = layout({ columns: 88, environments: ENVS });
+    const width = layout({
+      columns: NARROW,
+      environments: ENVS,
+      ...columnWidths(start().rows),
+    });
     // 4 columns of gutter, then the name and schema columns.
     const from = 4 + width.name + width.schema;
 
     for (let cell = 0; cell < ENVS.length; cell += 1) {
       const at = from + cell * width.cell;
 
-      // A heading starts on the cell's second column — `PROD` is four characters
-      // and five leaves no later start — and a value on its third, which puts the
-      // glyph under the middle letter of a three-letter heading.
-      expect(head[at]).toBe(' ');
-      expect(head[at + 1]).not.toBe(' ');
-      expect(row.slice(at, at + 2)).toBe('  ');
-      expect(row[at + 2]).toBe(MARKS.set);
+      // A heading starts on the cell's first column so `PROD` keeps a trailing
+      // space before Why. The glyph sits on the second character under DEV/STG.
+      expect(head[at]).not.toBe(' ');
+      expect(row[at]).toBe(' ');
+      expect(row[at + 1]).toBe(MARKS.set);
     }
+  });
+
+  it('centres the PROD glyph on the third character', () => {
+    const three = buildMatrix({
+      registry: { shared: [], api: ['A_DEF'], web: [], admin: [] },
+      environments: ENVIRONMENTS_THREE,
+      inventories: Object.fromEntries(
+        ENVIRONMENTS_THREE.map((environment) => [
+          environment,
+          { api: cell(['A_DEF']) },
+        ]),
+      ),
+      declarations: DECLARATIONS,
+    });
+    const state = initialState({
+      matrix: three,
+      environments: ENVIRONMENTS_THREE,
+    });
+    const painted = lines(state, { colors: false });
+    const row = painted.find((line) => line.includes('A_DEF'));
+    const width = layout({
+      columns: NARROW,
+      environments: ENVIRONMENTS_THREE,
+      ...columnWidths(state.rows),
+    });
+    const from = 4 + width.name + width.schema;
+
+    expect(row[from + 1]).toBe(MARKS.set);
+    expect(row[from + width.cell + 1]).toBe(MARKS.set);
+    expect(row[from + 2 * width.cell + 2]).toBe(MARKS.set);
   });
 
   // Two rules with one offset: a fingerprint sits under the glyph it belongs to.
@@ -1728,5 +2066,138 @@ describe('renderShell', () => {
   it('uses the shared glyphs rather than its own', () => {
     expect(text(start())).toContain(MARKS.set);
     expect(text(start())).toContain(MARKS.unset);
+  });
+
+  it('draws the cell menu as a boxed header, sized to the longest name plus six', () => {
+    const opened = press(press(tall(), 'right').state, 'enter').state;
+    const painted = renderShell(opened, { columns: 140, colors: true });
+    const joined = painted.join('\n');
+    const bar = painted.find((line) => line.includes('┌'));
+    const box = bar.replace(/\x1b\[[0-9;]*m/g, '').match(/┌─+┐/)[0];
+    const longest = Math.max(
+      ...opened.rows.map((row) => `${row.scope}.${row.key}`.length),
+      CELL_STATUS.set.length,
+    );
+
+    expect(joined).toContain('Set value');
+    expect(joined).toContain('Clear value');
+    expect(joined).toContain('Copy value');
+    expect(joined).toContain(CELL_STATUS.set);
+    expect(joined).toMatch(new RegExp(`${ESC}\\[30;107m.*Set value`));
+    expect(joined).toContain('┌');
+    expect(joined).toContain('├');
+    expect(joined).toContain('┤');
+    expect(joined).toContain('DEVELOPMENT');
+    expect(box.length - 2).toBe(longest + 6);
+    expect(joined).toContain('api.A_REQ');
+  });
+
+  it('says when the focused cell is empty, inside the menu', () => {
+    const opened = press(
+      press(press(tall(), 'right').state, 'down').state,
+      'enter',
+    ).state;
+    const joined = renderShell(opened, { columns: 140, colors: false }).join(
+      '\n',
+    );
+
+    expect(joined).toContain(CELL_STATUS.unset);
+    expect(joined).toContain('STAGING');
+    expect(joined).not.toContain(CELL_STATUS.set);
+  });
+
+  it('greys the grid with no fill while the menu is open', () => {
+    const opened = press(press(tall(), 'right').state, 'enter').state;
+    const joined = renderShell(opened, { columns: 140, colors: true }).join(
+      '\n',
+    );
+
+    expect(joined).toContain(`${ESC}[90m`);
+    expect(joined).not.toMatch(new RegExp(`${ESC}\\[97;4[123]m`));
+    expect(joined).not.toContain(`${ESC}[97;48;5;18m`);
+    expect(joined).not.toContain(`${ESC}[30;106m`);
+  });
+
+  it('keeps a long variable name whole in the cell menu', () => {
+    const key = 'TRIPGENCY_INTERNAL_API_KEY_ADMIN';
+    const matrix = buildMatrix({
+      registry: { shared: [], api: [key], web: [], admin: [] },
+      environments: ENVS,
+      inventories: {
+        local: { api: cell([key]) },
+        staging: { api: cell([key]) },
+      },
+      declarations: {
+        api: { [key]: { presence: 'required', defaultLiteral: null } },
+        web: {},
+        admin: {},
+      },
+    });
+    const opened = press(
+      press(initialState({ matrix, environments: ENVS }), 'right').state,
+      'enter',
+    ).state;
+    const joined = renderShell(opened, { columns: 80, colors: false }).join(
+      '\n',
+    );
+
+    expect(joined).toContain(`│   api.${key}   │`);
+    expect(joined).not.toContain('…');
+  });
+
+  it('prints set/clear/copy results inside the menu, and keeps the key hints', () => {
+    const opened = {
+      ...press(press(tall(), 'right').state, 'enter').state,
+      menu: {
+        selected: 2,
+        notice: CELL_NOTICE.copied,
+        draft: null,
+      },
+    };
+    const joined = renderShell(opened, { columns: 140, colors: false }).join(
+      '\n',
+    );
+
+    expect(joined).toContain(CELL_NOTICE.copied);
+    expect(joined).toContain('↑↓ choose');
+    expect(joined).not.toContain('Copied api.');
+  });
+
+  it('asks for the value inside the menu, masked', () => {
+    const prompting = press(
+      press(press(tall(), 'right').state, 'enter').state,
+      'enter',
+    ).state;
+    const typed = chars(chars(prompting, 'a').state, 'b').state;
+    const joined = renderShell(typed, { columns: 140, colors: false }).join(
+      '\n',
+    );
+
+    expect(joined).toContain(CELL_NOTICE.typeValue);
+    expect(joined).toContain('**');
+    expect(joined).not.toMatch(/│\s+ab\s+│/);
+    expect(joined).toContain('type the value');
+  });
+});
+
+describe('overlayBlock', () => {
+  it('places the block in the middle and leaves other lines alone', () => {
+    const sample = ['aaaaaa', 'bbbbbb', 'cccccc', 'dddddd', 'eeeeee'];
+    const overlaid = overlayBlock(sample, ['XY'], { columns: 6 });
+
+    expect(overlaid[2]).toBe('ccXYcc');
+    expect(overlaid[0]).toBe('aaaaaa');
+  });
+
+  it('paints the uncovered sides grey, without a fill', () => {
+    const ESC = String.fromCharCode(27);
+    const overlaid = overlayBlock(['abcdefghij'], ['XY'], {
+      columns: 10,
+      colors: true,
+    });
+
+    expect(overlaid[0]).toContain(`${ESC}[90mabcd`);
+    expect(overlaid[0]).toContain('XY');
+    expect(overlaid[0]).not.toMatch(/48;/);
   });
 });
