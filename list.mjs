@@ -17,6 +17,7 @@ import { decryptSecretsFile } from './decrypt.mjs';
 import { APP_SCHEMA_FILES, readSchemaDeclarations } from './env-contract.mjs';
 import { readEnvironment } from './inventory.mjs';
 import { checkPairs, findPlaceholders, pairFindings } from './invariants.mjs';
+import { materializedFindings } from './materialized.mjs';
 import { buildMatrix, countBySeverity } from './matrix.mjs';
 import { secretsFilePath } from './paths.mjs';
 import {
@@ -378,14 +379,29 @@ export function main(argv = process.argv.slice(2)) {
 
   try {
     const { inventories, meta, fingerprints, lookups } = collect(options);
+    const declarations = readDeclarations();
     const matrix = buildMatrix({
       registry: SCOPE_KEYS,
       environments: options.environments,
       inventories,
-      declarations: readDeclarations(),
+      declarations,
       fingerprints,
       exemptions: NOT_DRIFT_WHEN_UNSET,
     });
+
+    // Store versus this disk, which nothing else asks. Unconditional rather than
+    // behind `--fingerprints`: it needs no age key and decrypts nothing, and a
+    // flag would hide it from exactly the run someone makes when already stuck.
+    for (const environment of options.environments) {
+      if (!inventories[environment]) continue;
+      matrix.findings.push(
+        ...materializedFindings({
+          environment,
+          inventory: inventories[environment],
+          declarations,
+        }),
+      );
+    }
 
     let pairs = null;
     if (options.withFingerprints) {
@@ -397,11 +413,14 @@ export function main(argv = process.argv.slice(2)) {
         pairs[environment] = results;
         matrix.findings.push(...pairFindings(environment, results));
       }
-
-      // `buildMatrix` counted before these existed, and `--json` publishes
-      // `counts` for a script to gate on.
-      matrix.counts = countBySeverity(matrix.findings);
     }
+
+    // `buildMatrix` counted before the materialized and pair findings existed,
+    // and `--json` publishes `counts` for a script to gate on. Recounted here
+    // unconditionally: the materialized findings are appended on every run, so
+    // leaving this inside the `--fingerprints` branch would publish a `counts`
+    // that disagreed with `findings` in the default mode.
+    matrix.counts = countBySeverity(matrix.findings);
 
     if (options.asJson) {
       // `matrix` never held a value and `pairs` carries refs and verdicts only,
