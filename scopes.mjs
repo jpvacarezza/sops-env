@@ -145,10 +145,12 @@ export const UNPARSED_BY_ZOD = {
  */
 export const PLATFORM_PROVIDED = {
   CI: 'Set by GitHub Actions.',
+  GITHUB_SHA: 'Set by GitHub Actions to the commit SHA of the workflow.',
   VERCEL: 'Set by Vercel on every build and deployment.',
   VERCEL_ENV: 'Set by Vercel: production | preview | development.',
   VERCEL_URL: 'Set by Vercel to the deployment hostname.',
   VERCEL_GIT_COMMIT_SHA: 'Set by Vercel from the Git integration.',
+  RAILWAY_GIT_COMMIT_SHA: 'Set by Railway from the GitHub integration.',
 };
 
 /**

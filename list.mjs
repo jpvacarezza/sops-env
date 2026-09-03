@@ -34,7 +34,7 @@ import {
  * `scopes.mjs` already classifies these and says why for each: `UNPARSED_BY_ZOD`
  * is validated at its point of use (the `NEXT_PUBLIC_*` inlining constraint, the
  * build-time Sentry trio), `DERIVED` is written by the build from another
- * variable, and `PLATFORM_PROVIDED` comes from Vercel or GitHub. Warning about
+ * variable, and `PLATFORM_PROVIDED` comes from Vercel, Railway, or GitHub. Warning about
  * them would bury the one case that is real drift — a registry entry a feature
  * added and nobody ever set.
  */
