@@ -12,7 +12,7 @@
  * cells hold the same secret passes precomputed fingerprints, so "no value
  * reaches the model" is structural rather than a rule someone has to remember.
  */
-import { APP_SCOPES, APPS, SCOPES } from './scopes.mjs';
+import { APP_SCOPES, APPS, DEPLOYABLE_APPS, SCOPES } from './scopes.mjs';
 
 /** Apps that receive a scope's variables. `shared` merges into all of them. */
 export function receivingApps(scope, { appScopes = APP_SCOPES } = {}) {
@@ -68,6 +68,18 @@ export function buildMatrix({
 
   const scopes = SCOPES.map((scope) => {
     const declared = registry[scope] ?? [];
+
+    // An app scope with no platform to deploy to — `ingest` until slice 1b —
+    // has no `staging` or `production` to be missing a required key FROM.
+    // Restricting the finding to `local` is what keeps `missing-required`
+    // meaning "the app cannot boot", not "an environment nothing ever
+    // populates is empty". `shared` is exempt from this: it is not in `APPS`,
+    // so it always keeps the full environment list, because it merges into
+    // apps that ARE deployable.
+    const scopeEnvironments =
+      APPS.includes(scope) && !DEPLOYABLE_APPS.includes(scope)
+        ? environments.filter((environment) => environment === 'local')
+        : environments;
 
     // Rows are the union of the registry and whatever the files hold, so a key
     // nobody declared shows up as a visible row instead of an exception thrown
@@ -135,7 +147,7 @@ export function buildMatrix({
       }
 
       if (isDeclared && schema?.presence === 'required') {
-        for (const environment of environments) {
+        for (const environment of scopeEnvironments) {
           if (cells[environment].present) continue;
           findings.push({
             code: 'missing-required',

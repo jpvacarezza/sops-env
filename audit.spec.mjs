@@ -318,6 +318,9 @@ describe('auditEnvironments', () => {
     });
     expect(calls).toEqual([]);
 
+    // `ingest` is outside DEPLOYABLE_APPS, so `staging` is not one of the
+    // environments its schema is validated for — see the dedicated test
+    // below. This is the per-environment truth now, not the full APPS list.
     auditEnvironments({
       environments: ['staging'],
       withSchema: true,
@@ -325,6 +328,32 @@ describe('auditEnvironments', () => {
       runValidator,
     });
     expect(calls).toEqual(['api', 'web', 'admin']);
+  });
+
+  // The same rule `buildMatrix` applies to `missing-required` (matrix.mjs):
+  // an app outside DEPLOYABLE_APPS has no platform in `staging` or
+  // `production`, so spawning its validator there would only ever report
+  // "the projection is empty" — a fact about the store having no platform to
+  // fill it from, not about the app's configuration. `local` is real for
+  // every app, deployable or not, so it is always validated there.
+  it('validates a scope outside DEPLOYABLE_APPS for local only, and a DEPLOYABLE_APPS scope for every environment', () => {
+    for (const environment of ['local', 'staging', 'production']) {
+      const calls = [];
+      const runValidator = (options) => {
+        calls.push(options.app);
+        return okValidator();
+      };
+
+      auditEnvironments({
+        environments: [environment],
+        withSchema: true,
+        decrypt: () => structuredClone(clean),
+        runValidator,
+      });
+
+      expect(calls).toEqual(expect.arrayContaining(['api', 'web', 'admin']));
+      expect(calls.includes('ingest')).toBe(environment === 'local');
+    }
   });
 
   it('always says that the platform is outside what it can see', () => {

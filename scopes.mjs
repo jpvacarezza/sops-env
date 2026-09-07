@@ -13,17 +13,31 @@
  * app scope: those two DO merge, and the winner would be positional.
  */
 
-/** @type {readonly ['shared', 'api', 'web', 'admin']} */
-export const SCOPES = ['shared', 'api', 'web', 'admin'];
+/** @type {readonly ['shared', 'api', 'web', 'admin', 'ingest']} */
+export const SCOPES = ['shared', 'api', 'web', 'admin', 'ingest'];
 
-/** Deployables that receive a projection. `shared` is not one of them. */
-export const APPS = ['api', 'web', 'admin'];
+/**
+ * Apps that receive a projection: materialize, audit, the env contract. `shared`
+ * is not one of them.
+ */
+export const APPS = ['api', 'web', 'admin', 'ingest'];
+
+/**
+ * Apps `secrets:sync` pushes to a platform. `ingest` is materialized locally and
+ * in CI but has no Railway service until slice 1b: listing it here would make
+ * `planSync` emit a row whose destination cannot be resolved, and `sync.mjs`
+ * stops at the first such row — so api, web and admin would stop syncing too
+ * (spec §10.2). When the service exists, add `ingest` here AND
+ * `RAILWAY_SERVICE_ID_INGEST_<ENV>` to `platform-config.mjs` in the same change.
+ */
+export const DEPLOYABLE_APPS = ['api', 'web', 'admin'];
 
 /** Scope merge order per app. `shared` first so an app scope is never shadowed. */
 export const APP_SCOPES = {
   api: ['shared', 'api'],
   web: ['shared', 'web'],
   admin: ['shared', 'admin'],
+  ingest: ['shared', 'ingest'],
 };
 
 export const SCOPE_KEYS = {
@@ -101,6 +115,15 @@ export const SCOPE_KEYS = {
     'SENTRY_AUTH_TOKEN',
     'SENTRY_ORG',
     'SENTRY_PROJECT',
+  ],
+  ingest: [
+    'VENDORS_DATABASE_URL',
+    'PRODUCT_DATABASE_URL',
+    // Read by the worker the way the api reads it: an optional re-root of the dump tree.
+    'VENDOR_DATA_DIR',
+    'LOG_LEVEL',
+    'NODE_ENV',
+    'SENTRY_DSN',
   ],
 };
 

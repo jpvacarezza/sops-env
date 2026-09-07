@@ -20,6 +20,7 @@ const APP_MODULES = {
   api: '../../apps/api/src/config/env.js',
   web: '../../apps/web/src/env.schema.js',
   admin: '../../apps/admin/src/env.schema.js',
+  ingest: '../../apps/ingest/src/config/env.js',
 } as const;
 
 type App = keyof typeof APP_MODULES;
@@ -31,13 +32,14 @@ async function validate(app: App): Promise<void> {
 
   const parse = (loaded.parseApiEnv ??
     loaded.parseWebEnv ??
-    loaded.parseAdminEnv) as
+    loaded.parseAdminEnv ??
+    loaded.parseIngestEnv) as
     ((source: NodeJS.ProcessEnv) => unknown) | undefined;
 
   if (typeof parse !== 'function') {
     throw new Error(
       `${APP_MODULES[app]} exports no pure parser. This tool depends on ` +
-        'parseApiEnv / parseWebEnv / parseAdminEnv staying exported.',
+        'parseApiEnv / parseWebEnv / parseAdminEnv / parseIngestEnv staying exported.',
     );
   }
 

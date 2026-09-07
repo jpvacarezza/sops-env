@@ -28,6 +28,7 @@ export const APP_SCHEMA_FILES = {
   api: join(WORKSPACE_ROOT, 'apps/api/src/config/env.ts'),
   web: join(WORKSPACE_ROOT, 'apps/web/src/env.schema.ts'),
   admin: join(WORKSPACE_ROOT, 'apps/admin/src/env.schema.ts'),
+  ingest: join(WORKSPACE_ROOT, 'apps/ingest/src/config/env.ts'),
 };
 
 /** That app's `.env.example`, the documented contract (technical spec §18). */

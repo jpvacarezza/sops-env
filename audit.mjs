@@ -35,7 +35,7 @@ import { NOT_DRIFT_WHEN_UNSET, readDeclarations } from './list.mjs';
 import { buildMatrix } from './matrix.mjs';
 import { secretsFilePath } from './paths.mjs';
 import { projectEnv } from './project.mjs';
-import { APPS, ENVIRONMENTS, SCOPE_KEYS } from './scopes.mjs';
+import { APPS, DEPLOYABLE_APPS, ENVIRONMENTS, SCOPE_KEYS } from './scopes.mjs';
 
 // Re-exported: the placeholder check moved to `invariants.mjs` so the grid could
 // run it without pulling in the audit's process-spawning machinery, and the audit
@@ -237,6 +237,14 @@ export function auditEnvironments({
     if (!withSchema) continue;
 
     for (const app of APPS) {
+      // An app outside DEPLOYABLE_APPS — `ingest` until it has a platform —
+      // has no `staging` or `production` for its schema to fail against;
+      // spawning the validator there anyway is the same drift
+      // `buildMatrix`'s DEPLOYABLE_APPS check already keeps out of
+      // `missing-required` (matrix.mjs). `local` is real for every app, so it
+      // is always validated.
+      if (environment !== 'local' && !DEPLOYABLE_APPS.includes(app)) continue;
+
       findings.push(
         ...schemaFindings(
           environment,

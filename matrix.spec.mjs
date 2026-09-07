@@ -6,7 +6,7 @@ import { readDeclarations } from './list.mjs';
 import { buildMatrix, receivingApps } from './matrix.mjs';
 import { readEnvironment } from './inventory.mjs';
 import { secretsFilePath } from './paths.mjs';
-import { ENVIRONMENTS, SCOPE_KEYS } from './scopes.mjs';
+import { DEPLOYABLE_APPS, ENVIRONMENTS, SCOPE_KEYS } from './scopes.mjs';
 
 const REGISTRY = {
   shared: [],
@@ -58,7 +58,7 @@ describe('receivingApps', () => {
   });
 
   it('maps `shared` to every app, because it merges into all of them', () => {
-    expect(receivingApps('shared')).toEqual(['api', 'web', 'admin']);
+    expect(receivingApps('shared')).toEqual(['api', 'web', 'admin', 'ingest']);
   });
 });
 
@@ -215,6 +215,99 @@ describe('buildMatrix findings', () => {
     // One error per environment for the required key, one warning each for the
     // defaulted and the optional one.
     expect(matrix.counts).toEqual({ error: 2, warn: 2 });
+  });
+});
+
+// `ingest` is the real example: an app scope with no Railway service until
+// slice 1b, so `DEPLOYABLE_APPS` excludes it while `APPS` still includes it
+// (`scopes.mjs`). Before the fix, a required key with no default — exactly
+// what `ingest.VENDORS_DATABASE_URL` and `ingest.PRODUCT_DATABASE_URL` are —
+// produced a `missing-required` error for `staging` and `production` too,
+// even though the scope has no platform to be missing FROM there.
+describe('buildMatrix and scopes outside DEPLOYABLE_APPS', () => {
+  const REGISTRY_WITH_INGEST = {
+    ...REGISTRY,
+    ingest: ['I_REQ', 'I_DEF'],
+  };
+  const DECLARATIONS_WITH_INGEST = {
+    ...DECLARATIONS,
+    ingest: {
+      I_REQ: { presence: 'required', defaultLiteral: null },
+      I_DEF: { presence: 'default', defaultLiteral: "'x'" },
+    },
+  };
+
+  const buildAllEnvironments = (inventories) =>
+    buildMatrix({
+      registry: REGISTRY_WITH_INGEST,
+      environments: ENVIRONMENTS,
+      inventories,
+      declarations: DECLARATIONS_WITH_INGEST,
+    });
+
+  const ingestFindings = (matrix, code) =>
+    matrix.findings.filter(
+      (finding) => finding.scope === 'ingest' && finding.code === code,
+    );
+
+  it('confirms the fixture scope is outside DEPLOYABLE_APPS', () => {
+    expect(DEPLOYABLE_APPS).not.toContain('ingest');
+  });
+
+  it('flags a missing required key in local only, not in staging or production', () => {
+    const matrix = buildAllEnvironments({
+      local: {},
+      staging: {},
+      production: {},
+    });
+    const missing = ingestFindings(matrix, 'missing-required');
+
+    expect(missing.map((finding) => finding.environment)).toEqual(['local']);
+    expect(missing[0]).toMatchObject({
+      severity: 'error',
+      key: 'I_REQ',
+    });
+  });
+
+  it('does not flag missing-required once local has the key, even though staging and production stay empty', () => {
+    const matrix = buildAllEnvironments({
+      local: inventory({ ingest: ['I_REQ'] }),
+      staging: {},
+      production: {},
+    });
+
+    expect(ingestFindings(matrix, 'missing-required')).toEqual([]);
+  });
+
+  it('still warns missing-everywhere exactly once for a non-required key set nowhere', () => {
+    const matrix = buildAllEnvironments({
+      local: {},
+      staging: {},
+      production: {},
+    });
+    const everywhere = ingestFindings(matrix, 'missing-everywhere');
+
+    expect(everywhere.map((finding) => finding.key)).toEqual(['I_DEF']);
+  });
+
+  it('leaves a DEPLOYABLE_APPS scope like api checking every environment', () => {
+    const matrix = buildAllEnvironments({
+      local: {},
+      staging: {},
+      production: {},
+    });
+    const apiMissing = matrix.findings.filter(
+      (finding) =>
+        finding.scope === 'api' &&
+        finding.code === 'missing-required' &&
+        finding.key === 'A_REQ',
+    );
+
+    expect(apiMissing.map((finding) => finding.environment).sort()).toEqual([
+      'local',
+      'production',
+      'staging',
+    ]);
   });
 });
 

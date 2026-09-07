@@ -1,4 +1,4 @@
-import { APPS, ENVIRONMENTS } from './scopes.mjs';
+import { DEPLOYABLE_APPS, ENVIRONMENTS } from './scopes.mjs';
 import { projectEnv } from './project.mjs';
 
 const SYNCABLE = ENVIRONMENTS.filter((environment) => environment !== 'local');
@@ -39,12 +39,12 @@ export function parseSyncArgs(argv) {
 
   let apps;
   if (appArg === 'all') {
-    apps = [...APPS];
-  } else if (APPS.includes(appArg)) {
+    apps = [...DEPLOYABLE_APPS];
+  } else if (DEPLOYABLE_APPS.includes(appArg)) {
     apps = [appArg];
   } else {
     throw new Error(
-      `Unknown app "${appArg}". Expected one of: ${APPS.join(', ')}, all.\n${USAGE}`,
+      `Unknown app "${appArg}". Expected one of: ${DEPLOYABLE_APPS.join(', ')}, all.\n${USAGE}`,
     );
   }
 
