@@ -47,6 +47,10 @@ export const SCOPE_KEYS = {
   ],
   api: [
     'DATABASE_URL',
+    // The vendors database, read-only (ADR-0034). Diverges from `ingest`'s copy
+    // in staging and production, where the api connects as a read-only member
+    // and the worker as the owner — the two scopes never merge.
+    'VENDORS_DATABASE_URL',
     'BETTER_AUTH_SECRET',
     'BETTER_AUTH_URL',
     // The console's own auth origin. Not a duplicate of BETTER_AUTH_URL: Better
