@@ -456,3 +456,86 @@ describe('the real validator process', () => {
     ).toThrow(/Unknown app "nope"/);
   });
 });
+
+/**
+ * The promote and ship workflows refuse to move when the target environment's
+ * ciphertext lacks a key its app's schema requires.
+ *
+ * This asserts the WIRING, not the finding — `buildMatrix` already emits
+ * `missing-required` and `matrix.spec.mjs` covers that. What had no guard was
+ * that anything runs it before a deploy: `secrets:check` treats a missing scope
+ * key as legitimate, so until 2026-09-09 the first thing to notice was the api
+ * failing to boot. Deleting one of these two steps would restore that silence
+ * with nothing going red, which is the whole reason this test reads the YAML.
+ *
+ * It pins `--no-schema` deliberately. The Zod pass needs decrypted values and
+ * `tsx`; the structural pass needs only the key names a SOPS file lists in
+ * plaintext. Dropping the flag would make both jobs need decryption rights and
+ * an install, and would fail a promote on a placeholder or a pair mismatch —
+ * findings that are real but are not "this app cannot boot".
+ */
+describe('the deploy workflows refuse a missing required key', () => {
+  const workflow = (name) =>
+    readFileSync(
+      new URL(`../../.github/workflows/${name}`, import.meta.url),
+      'utf8',
+    );
+
+  it.each([
+    ['promote-staging.yml', 'staging'],
+    ['ship-production.yml', 'production'],
+  ])('%s audits %s before it moves anything', (file, environment) => {
+    // An exact trimmed LINE, not `toContain` on the file. A substring match is
+    // satisfied by `--no-schema stagingX`, which audits nothing and would have
+    // passed -- found by mutating this very assertion.
+    const lines = workflow(file)
+      .split(/\r?\n/)
+      .map((line) => line.trim());
+    expect(lines).toContain(
+      `run: node tools/secrets/audit.mjs --no-schema ${environment}`,
+    );
+  });
+
+  // Ordering is the point in `ship-production.yml`: `Deploy production (Vercel)`
+  // fires on the tag, so a check after the tag is a rollback rather than a
+  // refusal.
+  it('ships nothing before production is audited', () => {
+    const body = workflow('ship-production.yml');
+    const audit = body.indexOf('audit.mjs --no-schema production');
+    const tag = body.indexOf('Tag staging for production');
+    expect(audit).toBeGreaterThan(-1);
+    expect(tag).toBeGreaterThan(-1);
+    expect(audit).toBeLessThan(tag);
+  });
+
+  // `--no-schema` keeps the audit dependency-free, which is what lets it run in
+  // two workflows that have no `setup-pnpm` and no `pnpm install`. A
+  // third-party import anywhere in its module graph would break both silently
+  // — the step would fail on a module it cannot resolve, not on a finding.
+  it('reaches only node builtins with the schema pass off', () => {
+    const graph = [
+      'audit',
+      'matrix',
+      'inventory',
+      'invariants',
+      'scopes',
+      'paths',
+      'decrypt',
+    ];
+    const foreign = [];
+    for (const name of graph) {
+      const source = readFileSync(
+        new URL(`./${name}.mjs`, import.meta.url),
+        'utf8',
+      );
+      for (const match of source.matchAll(
+        /^import\s[^;]*?from\s+'([^']+)'/gm,
+      )) {
+        const spec = match[1];
+        if (spec.startsWith('.') || spec.startsWith('node:')) continue;
+        foreign.push(`${name}.mjs -> ${spec}`);
+      }
+    }
+    expect(foreign).toEqual([]);
+  });
+});
