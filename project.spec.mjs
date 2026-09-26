@@ -122,7 +122,7 @@ describe('the real scope registry', () => {
     }
   });
 
-  it('keeps vendor credentials out: they live in api_service, not env (ADR-0009)', () => {
+  it('keeps vendor credentials out: they live in fetch_credential, not env (ADR-0009, ADR-0035)', () => {
     const allKeys = SCOPES.flatMap((scope) => SCOPE_KEYS[scope]);
     expect(allKeys).not.toContain('TRAVEL_BUDDY_RAPIDAPI_KEY');
     expect(allKeys).not.toContain('TRAVEL_BUDDY_API_HOST');
