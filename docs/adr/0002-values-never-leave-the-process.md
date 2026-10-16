@@ -18,9 +18,11 @@ a process listing, a CI artifact or a committed file.
 - **A value is never an argument to `sops-env`.** `set` reads stdin or a masked
   prompt and hands the value to `sops set --value-stdin` on the child's stdin,
   so it is on no argv (this is why `sops` >= 3.11.0 is required).
-- **Plaintext lives behind a closure.** Decrypted data is consumed by the
-  function that needs it (`run`, `materialize`, `sync`) and is not returned to
-  callers that print.
+- **Plaintext lives behind a closure.** `collect` (`list` and the grid) and
+  `sync-plan` hand values out only as fingerprints and a `lookup` closure, so no
+  plain object of values is one `console.log` or `JSON.stringify` away from a
+  dump. `run`, `materialize` and `check` read the decrypted document inside the
+  command and pass it only to a child environment or a mode 0600 file.
 - **Platform errors are redacted.** `src/providers/redact.mjs` replaces every
   synced value of four or more characters, raw and JSON-escaped, with
   `<redacted>`, longest first, and caps the text at 500 characters.

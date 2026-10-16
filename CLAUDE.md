@@ -20,12 +20,15 @@ Node >= 24, pnpm 11. Try the CLI on the fixture project:
 - `cli.mjs`: dispatch; calls `loadConfig()` once, passes the frozen `ctx`.
 - `config/`: `load` (find `secrets.config.mjs`), `resolve` (defaults, validation,
   deep-frozen `ctx`), `types.d.ts`.
-- `store/`: paths, `sops` decrypt, ciphertext inventory, dotenv writing, projection.
+- `store/`: `paths` (store, secrets and `.env` locations), `sops` decrypt, ciphertext
+  inventory, dotenv writing, `project` (validate a document, project it per app).
 - `model/`: pure planners and checks (matrix, invariants, sync and set plans,
   env contract, materialized-file findings).
 - `providers/`: `vercel`, `railway`, the provider registry, `redact.mjs`.
 - `schema/`: optional Zod pass of `audit` (child process, `tsx` from the consumer).
-- `ui/`: the grid (`shell.mjs` is a pure reducer), prompts, clipboard.
+- `ui/`: the grid, split by layer: `shell-layout` (geometry), `shell-state` (pure
+  reducer), `shell-render` (painting); `shell.mjs` only re-exports them. Plus
+  `console` (the loop), prompts, clipboard.
 - `commands/`: one file per CLI command, plus `args.mjs`.
 - `index.mjs`: public API. Specs sit beside their modules (`*.spec.mjs`);
   `test/fixtures/project` is a consumer with real ciphertext.
@@ -64,4 +67,5 @@ Always-on instructions are paid on every turn. Do not grow this file with task
 dumps; put task detail in an ADR, a spec, or a path-scoped rule under
 `.claude/rules/`. `.ignore` hides generated files and executed plans from Grep
 and Glob sweeps; name the path to reach them. Do not read
-`src/ui/shell.mjs` (about 60 KB) end to end; jump to the function.
+`src/ui/shell-render.mjs` (about 40 KB) or `shell-state.mjs` (about 18 KB) end to
+end; jump to the function.
