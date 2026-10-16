@@ -30,15 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: pnpm
-
-      # Frozen install re-applies the gate; never `--trust-lockfile`.
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup-pnpm
 
       - name: Publish the report as a single issue
         env:
