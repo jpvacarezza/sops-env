@@ -22,7 +22,7 @@ describe('fixtureCtx', () => {
     expect(ctx.scopes).toEqual(['shared', 'api', 'web']);
     expect(ctx.deployableApps).toEqual(['api', 'web']);
     expect(ctx.pairs).toHaveLength(1);
-    expect(ctx.notes.api.INTERNAL_API_KEY_WEB).toMatch(/web\.INTERNAL_API_KEY/);
+    expect(ctx.notes.api.SERVICE_KEY_WEB).toMatch(/web\.SERVICE_KEY/);
   });
 
   it('shallow-merges overrides at the top level', () => {

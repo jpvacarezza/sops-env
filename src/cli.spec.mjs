@@ -162,7 +162,7 @@ describe('main', () => {
 
     expect(code).toBe(0);
     expect(
-      matrix.rows.find((row) => row.key === 'INTERNAL_API_KEY_WEB').note,
+      matrix.rows.find((row) => row.key === 'SERVICE_KEY_WEB').note,
     ).toMatch(/BFF/);
   });
 });
@@ -188,7 +188,7 @@ describe('the binary', { timeout: 30_000 }, () => {
     if (result.error) throw result.error;
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(
-      /local\/api: 3 keys — DATABASE_URL, INTERNAL_API_KEY_WEB, LOG_LEVEL/,
+      /local\/api: 4 keys — DATABASE_URL, LOG_LEVEL, PROXY_HOPS, SERVICE_KEY_WEB/,
     );
   });
 });

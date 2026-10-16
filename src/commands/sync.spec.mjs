@@ -45,7 +45,7 @@ describe('vercel varType', () => {
   });
 
   it('marks everything else as sensitive', () => {
-    expect(varType(CTX, 'INTERNAL_API_KEY')).toBe('sensitive');
+    expect(varType(CTX, 'SERVICE_KEY')).toBe('sensitive');
     expect(varType(CTX, 'API_URL')).toBe('sensitive');
   });
 });
@@ -59,20 +59,20 @@ describe('planSync', () => {
       BETTER_AUTH_URL: 'https://example.test',
       BETTER_AUTH_TRUSTED_ORIGINS: 'https://example.test',
       SECURITY_EVENT_IP_SALT: 't'.repeat(32),
-      TRUST_PROXY: '1',
+      PROXY_HOPS: '1',
       SWAGGER_ENABLED: 'false',
-      INTERNAL_API_KEY_WEB: 'w'.repeat(32),
-      INTERNAL_API_KEY_ADMIN: 'a'.repeat(32),
+      SERVICE_KEY_WEB: 'w'.repeat(32),
+      SERVICE_KEY_ADMIN: 'a'.repeat(32),
     },
     web: {
       API_URL: 'https://api.example.test',
-      INTERNAL_API_KEY: 'w'.repeat(32),
+      SERVICE_KEY: 'w'.repeat(32),
       ENABLED_COUNTRIES: 'AR,CO',
       NEXT_PUBLIC_SITE_URL: 'https://example.test',
     },
     admin: {
       API_URL: 'https://api.example.test',
-      INTERNAL_API_KEY: 'a'.repeat(32),
+      SERVICE_KEY: 'a'.repeat(32),
     },
   };
 
@@ -95,12 +95,12 @@ describe('planSync', () => {
       'vercel/admin',
     ]);
     expect(plan[0].keys).toContain('DATABASE_URL');
-    expect(plan[0].keys).toContain('INTERNAL_API_KEY_WEB');
-    expect(plan[0].keys).toContain('INTERNAL_API_KEY_ADMIN');
-    expect(plan[0].keys).not.toContain('INTERNAL_API_KEY');
-    expect(plan[1].keys).toContain('INTERNAL_API_KEY');
-    expect(plan[1].keys).not.toContain('INTERNAL_API_KEY_WEB');
-    expect(plan[2].keys).toContain('INTERNAL_API_KEY');
+    expect(plan[0].keys).toContain('SERVICE_KEY_WEB');
+    expect(plan[0].keys).toContain('SERVICE_KEY_ADMIN');
+    expect(plan[0].keys).not.toContain('SERVICE_KEY');
+    expect(plan[1].keys).toContain('SERVICE_KEY');
+    expect(plan[1].keys).not.toContain('SERVICE_KEY_WEB');
+    expect(plan[2].keys).toContain('SERVICE_KEY');
     expect(plan[1].keys).toContain('NEXT_PUBLIC_SITE_URL');
     expect(plan[1].keys).not.toContain('DATABASE_URL');
     // The plan never carries values — logging a plan must be safe.

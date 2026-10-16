@@ -12,8 +12,8 @@ pnpm lint               # eslint .
 pnpm format:check       # prettier --check . (covers Markdown); `pnpm format` writes
 ```
 
-Node >= 24, pnpm 11. Try the CLI on the fixture project:
-`cd test/fixtures/project && SOPS_AGE_KEY_FILE=../age-key.txt node ../../../bin/sops-env.mjs list`.
+Node >= 24, pnpm 11. Try the CLI on the fixture project: `pnpm try` opens the grid,
+`pnpm try list` (or any command and args) passes through to `bin/sops-env.mjs`.
 
 ## Architecture (`src/`)
 

@@ -251,7 +251,7 @@ describe('readDeclarations', () => {
     const api = readDeclarations(fixtureCtx()).api;
 
     expect(api.DATABASE_URL.presence).toBe('required');
-    expect(api.TRUST_PROXY).toEqual({
+    expect(api.PROXY_HOPS).toEqual({
       presence: 'default',
       defaultLiteral: "'false'",
     });
@@ -325,7 +325,7 @@ describe('the list model as JSON', () => {
     const json = JSON.parse(JSON.stringify({ matrix }));
 
     expect(
-      json.matrix.rows.find((row) => row.key === 'INTERNAL_API_KEY_WEB').note,
+      json.matrix.rows.find((row) => row.key === 'SERVICE_KEY_WEB').note,
     ).toMatch(/BFF/);
   });
 });

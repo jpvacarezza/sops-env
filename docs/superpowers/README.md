@@ -17,6 +17,6 @@ adding it to `docs/superpowers/.ignore`.
 Local agent scratch notes live in `.superpowers/`, which is gitignored and
 outside Prettier; nothing there is a source of truth.
 
-The design this package implements was written in the tripgency repository
+The design this package implements was written before the package existed
 (`docs/superpowers/specs/2026-10-15-sops-env-package-design.md`). Its Decisions
 are summarized by the ADRs here.

@@ -40,13 +40,13 @@ export default {
     api: {
       keys: {
         DATABASE_URL: null,
-        INTERNAL_API_KEY_WEB: 'Must equal web.INTERNAL_API_KEY.',
+        SERVICE_KEY_WEB: 'Must equal web.SERVICE_KEY.',
       },
     },
     web: {
       keys: {
         API_URL: null,
-        INTERNAL_API_KEY: 'This app’s secret for calls to the API.',
+        SERVICE_KEY: 'This app’s secret for calls to the API.',
         NEXT_PUBLIC_SITE_URL: 'Inlined by Next; not parsed by the schema.',
       },
     },
@@ -79,8 +79,8 @@ export default {
     // default: []
     {
       name: 'api ↔ web',
-      left: { scope: 'api', key: 'INTERNAL_API_KEY_WEB' },
-      right: { scope: 'web', key: 'INTERNAL_API_KEY' },
+      left: { scope: 'api', key: 'SERVICE_KEY_WEB' },
+      right: { scope: 'web', key: 'SERVICE_KEY' },
       relation: 'equal', // or 'differ'
       why: 'web presents this key to the API on every call; a mismatch is a blanket 401.',
     },
@@ -202,4 +202,4 @@ Behavior-changing PRs are verified before and after against that fixture; see [d
 
 ## Origin and license
 
-Extracted from tripgency's in-repo secrets tooling; MIT.
+MIT.

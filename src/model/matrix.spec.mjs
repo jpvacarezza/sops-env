@@ -224,10 +224,10 @@ it('carries the key note on each row', () => {
   const ctx = fixtureCtx();
   const matrix = buildMatrix(ctx, { environments: ['local'], inventories: {} });
   const noted = matrix.rows.find(
-    (r) => r.scope === 'api' && r.key === 'INTERNAL_API_KEY_WEB',
+    (r) => r.scope === 'api' && r.key === 'SERVICE_KEY_WEB',
   );
 
-  expect(noted.note).toMatch(/web\.INTERNAL_API_KEY/);
+  expect(noted.note).toMatch(/web\.SERVICE_KEY/);
   expect(matrix.rows.find((r) => r.key === 'DATABASE_URL').note).toBeNull();
 });
 

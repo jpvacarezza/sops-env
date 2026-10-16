@@ -29,7 +29,7 @@ export function fixtureCtx(overrides = {}) {
  * A ctx from a bare `{ scope: [KEY, …] }` registry, which is how the imported
  * specs describe their worlds. Every scope but `shared` becomes an app receiving
  * `['shared', scope]` (when `shared` exists), deployable unless listed in
- * `nonDeployable`; `api` goes to railway, everything else to vercel, as tripgency.
+ * `nonDeployable`; `api` goes to railway, everything else to vercel.
  */
 export function registryCtx(
   registry,

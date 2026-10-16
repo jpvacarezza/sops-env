@@ -50,13 +50,13 @@ describe('readSchemaDeclarations', () => {
 const EnvSchema = z.object({
   DATABASE_URL: z.string().min(1),
   PORT: z.coerce.number().default(6003),
-  SENTRY_DSN: z.string().url().optional(),
+  MONITORING_DSN: z.string().url().optional(),
 });`;
 
     expect(readSchemaDeclarations(source)).toEqual({
       DATABASE_URL: { presence: 'required', defaultLiteral: null },
       PORT: { presence: 'default', defaultLiteral: '6003' },
-      SENTRY_DSN: { presence: 'optional', defaultLiteral: null },
+      MONITORING_DSN: { presence: 'optional', defaultLiteral: null },
     });
   });
 
@@ -119,14 +119,14 @@ const EnvSchema = z
   });
 
   // The boundary is brace-matched, not "the first line starting with `})`".
-  // That shortcut read TRUST_PROXY correctly only because `.default()` came
+  // That shortcut read PROXY_HOPS correctly only because `.default()` came
   // before its `.transform()`; reordering flipped it to `required`, and a
   // defaulted variable then reported as a missing-required error per environment.
   it('finds the default when a transform closes a brace before the object does', () => {
     const source = `
 const EnvSchema = z
   .object({
-    TRUST_PROXY: z
+    PROXY_HOPS: z
       .union([z.literal('false'), z.coerce.number()])
       .default('false')
       .transform((value) => {
@@ -135,7 +135,7 @@ const EnvSchema = z
   })
   .refine(() => true);`;
 
-    expect(readSchemaDeclarations(source).TRUST_PROXY).toEqual({
+    expect(readSchemaDeclarations(source).PROXY_HOPS).toEqual({
       presence: 'default',
       defaultLiteral: "'false'",
     });
@@ -145,7 +145,7 @@ const EnvSchema = z
     const source = `
 const EnvSchema = z
   .object({
-    TRUST_PROXY: z
+    PROXY_HOPS: z
       .union([z.literal('false'), z.coerce.number()])
       .transform((value) => {
         return value === 'false' ? false : value;
@@ -154,7 +154,7 @@ const EnvSchema = z
   })
   .refine(() => true);`;
 
-    expect(readSchemaDeclarations(source).TRUST_PROXY.presence).toBe('default');
+    expect(readSchemaDeclarations(source).PROXY_HOPS.presence).toBe('default');
   });
 
   it('throws rather than reporting every variable as unvalidated', () => {
@@ -211,9 +211,9 @@ if (process.env.VERCEL_ENV !== 'production') {}
  * Next only inlines a literal \`process.env.NEXT_PUBLIC_X\` member expression.
  */
 // Historical: process.env.OLD_FLAG used to gate this.
-const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
+const dsn = process.env.NEXT_PUBLIC_MONITORING_DSN;
 `;
-    expect(readEnvReads(source)).toEqual(['NEXT_PUBLIC_SENTRY_DSN']);
+    expect(readEnvReads(source)).toEqual(['NEXT_PUBLIC_MONITORING_DSN']);
   });
 
   it('reports each variable once however often it is read', () => {

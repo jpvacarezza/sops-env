@@ -1,5 +1,5 @@
 /**
- * A tripgency-shaped consumer, small: two apps, three scopes, one pair, one
+ * A small consumer: two apps, three scopes, one pair, one
  * exemption of each kind, one app on Railway and one on Vercel.
  * @type {import('../../../src/config/types.d.ts').SecretsConfig}
  */
@@ -14,16 +14,16 @@ export default {
     api: {
       keys: {
         DATABASE_URL: null,
-        INTERNAL_API_KEY_WEB:
-          'Must equal web.INTERNAL_API_KEY; web presents it on every BFF call.',
-        TRUST_PROXY: 'Hop count behind the platform proxy. Defaults to false.',
+        SERVICE_KEY_WEB:
+          'Must equal web.SERVICE_KEY; web presents it on every BFF call.',
+        PROXY_HOPS: 'Hop count behind the platform proxy. Defaults to false.',
       },
     },
     web: {
       keys: {
         API_URL: null,
-        INTERNAL_API_KEY: 'This app’s BFF→API secret.',
-        SENTRY_DSN: null,
+        SERVICE_KEY: 'This app’s BFF→API secret.',
+        MONITORING_DSN: null,
         NEXT_PUBLIC_SITE_URL: 'Inlined by Next; not parsed by the schema.',
       },
     },
@@ -49,8 +49,8 @@ export default {
   pairs: [
     {
       name: 'api ↔ web',
-      left: { scope: 'api', key: 'INTERNAL_API_KEY_WEB' },
-      right: { scope: 'web', key: 'INTERNAL_API_KEY' },
+      left: { scope: 'api', key: 'SERVICE_KEY_WEB' },
+      right: { scope: 'web', key: 'SERVICE_KEY' },
       relation: 'equal',
       why: 'web presents this key to the API on every BFF call; a mismatch is a blanket 401.',
     },

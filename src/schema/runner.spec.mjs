@@ -315,7 +315,7 @@ describe('the real validator process', { timeout: 60_000 }, () => {
     shared: { LOG_LEVEL: 'info' },
     api: {
       DATABASE_URL: 'postgresql://x/y',
-      INTERNAL_API_KEY_WEB: 'k'.repeat(32),
+      SERVICE_KEY_WEB: 'k'.repeat(32),
     },
     web: {},
   };
@@ -336,12 +336,12 @@ describe('the real validator process', { timeout: 60_000 }, () => {
       app: 'api',
       document: {
         ...good,
-        api: { ...good.api, INTERNAL_API_KEY_WEB: 'too-short' },
+        api: { ...good.api, SERVICE_KEY_WEB: 'too-short' },
       },
     });
 
     expect(outcome.state).toBe('invalid');
-    expect(outcome.message).toMatch(/INTERNAL_API_KEY_WEB/);
+    expect(outcome.message).toMatch(/SERVICE_KEY_WEB/);
     expect(outcome.message).not.toContain('too-short');
   });
 
@@ -353,7 +353,7 @@ describe('the real validator process', { timeout: 60_000 }, () => {
       document: {
         shared: { LOG_LEVEL: canary },
         api: {},
-        web: { API_URL: 'https://a.test', INTERNAL_API_KEY: 'k'.repeat(32) },
+        web: { API_URL: 'https://a.test', SERVICE_KEY: 'k'.repeat(32) },
       },
     });
 
@@ -369,7 +369,7 @@ describe('the real validator process', { timeout: 60_000 }, () => {
       app: 'api',
       document: {
         ...good,
-        api: { DATABASE_URL: same, INTERNAL_API_KEY_WEB: same },
+        api: { DATABASE_URL: same, SERVICE_KEY_WEB: same },
       },
     });
 
