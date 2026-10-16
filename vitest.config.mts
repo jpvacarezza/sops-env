@@ -15,8 +15,8 @@ export default defineConfig({
       reporter: ['text-summary', 'lcov'],
       include: ['src/**/*.mjs'],
       exclude: ['src/**/*.spec.mjs', 'src/config/types.d.ts'],
-      // The floors tripgency measured for `tools/`; re-measured in Task 10.
-      thresholds: { lines: 68, functions: 75, branches: 71, statements: 68 },
+      // Just under the measured 77.9 / 82.8 / 78.5 / 77.3: raise when coverage does.
+      thresholds: { lines: 75, functions: 80, branches: 76, statements: 75 },
     },
   },
 });

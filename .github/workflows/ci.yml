@@ -52,6 +52,19 @@ jobs:
 
       - run: node --check bin/sops-env.mjs
 
+      # The published tarball is `files` + `exports`; fail if either points at
+      # something that is not packed.
+      - name: Verify the package contents
+        run: |
+          set -euo pipefail
+          pnpm pack --pack-destination "${RUNNER_TEMP}"
+          tarball="$(ls "${RUNNER_TEMP}"/sops-env-*.tgz)"
+          listing="$(tar -tzf "${tarball}")"
+          for path in package/bin/sops-env.mjs package/src/index.mjs package/src/providers/index.mjs package/src/config/types.d.ts package/LICENSE; do
+            grep -qx "${path}" <<<"${listing}" || { echo "missing from tarball: ${path}"; exit 1; }
+          done
+          if grep -q '\.spec\.mjs$' <<<"${listing}"; then echo "spec files packed"; exit 1; fi
+
       - name: Install gitleaks
         env:
           GITLEAKS_VERSION: '8.30.1'
@@ -66,3 +79,36 @@ jobs:
 
       - name: Scan working tree for secrets
         run: gitleaks dir --verbose --redact --no-banner --config .gitleaks.toml .
+
+  # The tool is used on Windows laptops; the POSIX job does not prove that.
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install sops
+        shell: bash
+        env:
+          SOPS_VERSION: '3.9.4'
+          # The sops-v3.9.4.exe line of the release checksums file.
+          SOPS_SHA256: 'bee270926fc55b5b89ed9ce87fb2569a36c74e99d63e6392090b3d0f0c2775eb'
+        run: |
+          set -euo pipefail
+          dir="${RUNNER_TEMP}/sops-bin"
+          mkdir -p "${dir}"
+          curl -fsSL "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.exe" -o "${dir}/sops.exe"
+          echo "${SOPS_SHA256}  ${dir}/sops.exe" | sha256sum -c -
+          echo "${dir}" >> "${GITHUB_PATH}"
+
+      - run: pnpm test
+        env:
+          CI: '1'
