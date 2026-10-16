@@ -1,0 +1,2 @@
+# sops ciphertext: reformatting it breaks the MAC.
+test/fixtures/project/secrets/*.enc.yaml
