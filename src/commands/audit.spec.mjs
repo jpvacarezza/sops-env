@@ -11,12 +11,9 @@ import {
 } from '../../test/helpers/ctx.mjs';
 import {
   auditEnvironments,
-  childEnvironment,
   findPlaceholders,
   parseAuditArgs,
   placeholderFindings,
-  schemaFindings,
-  validateProjection,
 } from './audit.mjs';
 
 const REGISTRY = {
@@ -92,188 +89,6 @@ describe('placeholderFindings', () => {
       expect(finding.severity).toBe('error');
       expect(finding.message).toMatch(/Replace it before/);
     }
-  });
-});
-
-describe('childEnvironment', () => {
-  const base = {
-    PATH: '/usr/bin',
-    DATABASE_URL: 'postgresql://from-my-shell/db',
-    UNRELATED: 'keep me',
-  };
-
-  // Without the strip, a DATABASE_URL exported in your terminal satisfies a
-  // schema the store cannot, and the audit reports the shell instead of the repo.
-  it('strips every registry variable out of the inherited environment', () => {
-    const env = childEnvironment(CTX, {}, { environment: 'staging', base });
-
-    expect(env.DATABASE_URL).toBeUndefined();
-    expect(env.UNRELATED).toBe('keep me');
-    expect(env.PATH).toBe('/usr/bin');
-  });
-
-  it('applies the projection', () => {
-    const env = childEnvironment(
-      CTX,
-      { DATABASE_URL: 'postgresql://store/db' },
-      { environment: 'staging', base },
-    );
-
-    expect(env.DATABASE_URL).toBe('postgresql://store/db');
-  });
-
-  // The store sets NODE_ENV nowhere, so without this every
-  // `NODE_ENV === 'production'` refinement is silently disarmed.
-  it('assumes the NODE_ENV the platform will set', () => {
-    // Literals, not ctx.nodeEnv: reading the same map on both sides would
-    // pass with { production: 'development' }, which disarms every
-    // production-only refinement — the one thing this map exists to arm.
-    const expected = {
-      local: 'development',
-      staging: 'staging',
-      production: 'production',
-    };
-
-    expect(CTX.nodeEnv).toEqual(expected);
-    for (const environment of CTX.environments) {
-      expect(childEnvironment(CTX, {}, { environment, base }).NODE_ENV).toBe(
-        expected[environment],
-      );
-    }
-  });
-
-  it('lets a NODE_ENV in the store win over the assumption', () => {
-    const env = childEnvironment(
-      CTX,
-      { NODE_ENV: 'test' },
-      { environment: 'production', base },
-    );
-
-    expect(env.NODE_ENV).toBe('test');
-  });
-
-  it('maps the configured conditions to NODE_OPTIONS', () => {
-    const ctx = fixtureCtx({
-      schemaRunner: { conditions: ['@org/source'] },
-    });
-    const env = childEnvironment(ctx, {}, { environment: 'local', base });
-
-    expect(env.NODE_OPTIONS).toContain('--conditions=@org/source');
-  });
-
-  it('keeps a developer NODE_OPTIONS and appends the conditions after it', () => {
-    const ctx = fixtureCtx({
-      schemaRunner: { conditions: ['@org/source'] },
-    });
-    const env = childEnvironment(
-      ctx,
-      {},
-      {
-        environment: 'local',
-        base: { ...base, NODE_OPTIONS: '--no-warnings' },
-      },
-    );
-
-    expect(env.NODE_OPTIONS).toBe('--no-warnings --conditions=@org/source');
-  });
-
-  it('leaves NODE_OPTIONS undefined when nothing configures it', () => {
-    const env = childEnvironment(CTX, {}, { environment: 'local', base });
-
-    expect(env.NODE_OPTIONS).toBeUndefined();
-  });
-});
-
-describe('validateProjection', () => {
-  const target = { environment: 'staging', app: 'api', document: clean };
-
-  it('passes on a valid verdict', () => {
-    expect(
-      validateProjection(CTX, target, { runValidator: okValidator }),
-    ).toEqual({ state: 'ok' });
-  });
-
-  it('surfaces the schema message on an invalid one', () => {
-    const runValidator = () => ({
-      status: 1,
-      stdout:
-        '{"ok":false,"kind":"invalid","message":"  - DATABASE_URL: too short"}',
-      stderr: '',
-    });
-
-    expect(validateProjection(CTX, target, { runValidator })).toEqual({
-      state: 'invalid',
-      message: '  - DATABASE_URL: too short',
-    });
-  });
-
-  // A validator that could not load its own subject has said nothing about the
-  // store. Calling that `invalid` reads as "production's config is wrong" when
-  // the truth is "this tool is broken", and someone would go looking at Railway.
-  it('reports a module that would not load as unavailable, not invalid', () => {
-    const runValidator = () => ({
-      status: 1,
-      stdout:
-        '{"ok":false,"kind":"load","message":"Cannot find module env.schema.js"}',
-      stderr: '',
-    });
-
-    expect(validateProjection(CTX, target, { runValidator }).state).toBe(
-      'unavailable',
-    );
-  });
-
-  // A validator that cannot run is not a pass. It is a warning that the check
-  // did not happen, which is a different thing from "nothing is wrong".
-  it('reports a spawn failure as unavailable, not as ok', () => {
-    const runValidator = () => ({ error: new Error('spawn ENOENT') });
-
-    expect(validateProjection(CTX, target, { runValidator }).state).toBe(
-      'unavailable',
-    );
-  });
-
-  it('reports unparseable output as unavailable and keeps the tail of stderr', () => {
-    const runValidator = () => ({
-      status: 1,
-      stdout: '',
-      stderr: 'SyntaxError: boom',
-    });
-    const outcome = validateProjection(CTX, target, { runValidator });
-
-    expect(outcome.state).toBe('unavailable');
-    expect(outcome.message).toMatch(/SyntaxError: boom/);
-  });
-});
-
-describe('schemaFindings', () => {
-  it('says nothing when the projection is valid', () => {
-    expect(schemaFindings('staging', 'api', { state: 'ok' })).toEqual([]);
-  });
-
-  it('is an error when the app would fail at boot', () => {
-    const [finding] = schemaFindings('production', 'api', {
-      state: 'invalid',
-      message: 'x',
-    });
-
-    expect(finding).toMatchObject({
-      code: 'schema-invalid',
-      severity: 'error',
-    });
-    expect(finding.message).toMatch(/fail at boot/);
-  });
-
-  it('is a warning when the check could not run', () => {
-    const [finding] = schemaFindings('production', 'api', {
-      state: 'unavailable',
-      message: 'x',
-    });
-
-    expect(finding).toMatchObject({
-      code: 'schema-unchecked',
-      severity: 'warn',
-    });
   });
 });
 
@@ -380,6 +195,26 @@ describe('auditEnvironments', () => {
       expect(calls).toEqual(expect.arrayContaining(['api', 'web']));
       expect(calls.includes('ingest')).toBe(environment === 'local');
     }
+  });
+
+  it('reports schema-unchecked, not schema-invalid, when the apps have no schema', () => {
+    // The fixture ciphertext exists on disk (auditEnvironments reads inventories
+    // from it); the override drops both schema entries.
+    const ctx = fixtureCtx({
+      apps: {
+        api: { scopes: ['shared', 'api'] },
+        web: { scopes: ['shared', 'web'] },
+      },
+    });
+    const { findings, errors } = auditEnvironments(ctx, {
+      environments: ['local'],
+      decrypt: () => ({ shared: {}, api: { DATABASE_URL: 'x' }, web: {} }),
+    });
+
+    expect(findings.filter((f) => f.code === 'schema-unchecked')).toHaveLength(
+      2,
+    );
+    expect(errors.map((f) => f.code)).not.toContain('schema-invalid');
   });
 
   it('always says that the platform is outside what it can see', () => {

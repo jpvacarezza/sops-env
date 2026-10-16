@@ -229,6 +229,7 @@ describe('productionSourceFiles', () => {
     const files = productionSourceFiles(ctx).map((file) => ctx.relative(file));
 
     expect(files).toEqual([
+      'apps/api/src/env-plain.mjs',
       'apps/api/src/env.ts',
       'apps/web/src/env.schema.ts',
       'apps/web/src/uses-env.ts',
