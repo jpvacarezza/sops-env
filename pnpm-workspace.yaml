@@ -1,2 +1,13 @@
+# Supply-chain gate. Applies on every install (laptop, CI, consumers building from
+# this repo), so it cannot be skipped by a different pipeline. Never pass
+# --trust-lockfile anywhere; it skips exactly this.
+minimumReleaseAge: 4320 # 3 days, in minutes
+trustPolicy: no-downgrade
+# no-downgrade flags locked versions that lack provenance a package's current release
+# has, even when the maintainer merely adopted trusted publishing later. Forgive
+# downgrades once a version is older than 90 days; minimumReleaseAge already blocks
+# anything under 3 days, so the enforced window for a real takeover is 3-90 days.
+trustPolicyIgnoreAfter: 129600 # 90 days, in minutes
+
 allowBuilds:
   esbuild: true
