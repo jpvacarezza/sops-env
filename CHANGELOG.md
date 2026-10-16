@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `src/ui/shell.mjs` (1871 lines) is split into `shell-layout.mjs`, `shell-state.mjs`
+  and `shell-render.mjs`; `shell.mjs` re-exports the same public names. No
+  behaviour change.
+
 - **Breaking:** requires `sops` >= 3.11.0. `set` now passes the value to
   `sops set --value-stdin`, so it is no longer on the child's argv (the v0.1.0
   known limitation is closed). CI pins sops 3.11.0.
