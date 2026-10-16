@@ -28,7 +28,7 @@ const body = (indent) =>
     'sops:',
     `${indent}kms: []`,
     `${indent}age:`,
-    `${indent}${indent}- recipient: age1rqjglf0dpp609kmwene07v66n5zempedl8d8dmpjfg4x0pdly4vqhe7pwu`,
+    `${indent}${indent}- recipient: age19pu4qdgn4eu88pkf3vuvpc6r8gjhyyuxcxsnh9kyn3nrsvrfqatq6gek4m`,
     `${indent}${indent}  enc: |`,
     `${indent}${indent}    -----BEGIN AGE ENCRYPTED FILE-----`,
     `${indent}${indent}    YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0rIFgyNTUxOSBGdUVP`,
@@ -185,7 +185,7 @@ describe('parseInventory', () => {
 describe('readRecipients', () => {
   it('reads the age recipients the document carries', () => {
     expect(readRecipients(FOUR_SPACE)).toEqual([
-      'age1rqjglf0dpp609kmwene07v66n5zempedl8d8dmpjfg4x0pdly4vqhe7pwu',
+      'age19pu4qdgn4eu88pkf3vuvpc6r8gjhyyuxcxsnh9kyn3nrsvrfqatq6gek4m',
     ]);
   });
 

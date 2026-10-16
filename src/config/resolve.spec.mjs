@@ -155,7 +155,7 @@ describe('resolveConfig', () => {
   it.each([
     [42, 'must be a string or null, got number'],
     [
-      'age1rqjglf0dpp609kmwene07v66n5zempedl8d8dmpjfg4x0pdly4vqhe7pwu',
+      'age19pu4qdgn4eu88pkf3vuvpc6r8gjhyyuxcxsnh9kyn3nrsvrfqatq6gek4m',
       'looks like a key or a value',
     ],
     ['AGE-SECRET-KEY-1ABC', 'looks like a key or a value'],
