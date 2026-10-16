@@ -9,22 +9,19 @@ on:
 permissions:
   contents: read
 
+# A new push to a PR supersedes the previous run. Never cancel main or tag runs:
+# a tag run is the release gate and must finish.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      # No `version:`: package.json `packageManager` pins pnpm, and giving both
-      # can fail as "multiple versions of pnpm specified".
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup-pnpm
 
       # Pin sops to the version the code is measured against.
       - name: Install sops
@@ -86,14 +83,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup-pnpm
 
       - name: Install sops
         shell: bash
@@ -112,3 +102,29 @@ jobs:
       - run: pnpm test
         env:
           CI: '1'
+
+  # Advisory gate on the dependency tree. `--audit-level=high` keeps moderate
+  # and low advisories (often unreachable dev-only noise) from blocking merges
+  # while still failing on anything that is realistically exploitable. Run for
+  # prod only first so a runtime advisory is named as such, then for the whole
+  # tree (dev tooling runs in CI and on laptops, so it is an attack surface).
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-pnpm
+
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level=high
+
+      - name: Audit all dependencies
+        run: pnpm audit --audit-level=high
+
+      # Pinned (1.179.0, published > 2 weeks before pinning) and run against the
+      # rules copied into .semgrep.yml; no registry pack is fetched at scan time.
+      - name: Install semgrep
+        run: pip install --user semgrep==1.179.0
+
+      - name: Static analysis (semgrep)
+        run: ~/.local/bin/semgrep scan --config .semgrep.yml --error --metrics=off --disable-version-check .

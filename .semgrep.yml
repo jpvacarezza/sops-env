@@ -1,0 +1,75 @@
+# Semgrep Community Edition config for this repo.
+#
+# Rules are copied into THIS file so CI never fetches a registry pack at scan
+# time (that content would be unpinned, the same supply-chain class the rest of
+# the CI pins against). Each rule records the semgrep-rules commit its pattern
+# was taken from, adapted for plain Node ESM.
+#
+# Not in this file, on purpose: credential rules (gitleaks owns those).
+#
+# source-commit: https://github.com/semgrep/semgrep-rules/commit/40b8c63f75dc7c22c8a77482d73bfb864b146f7e
+
+rules:
+  - id: sops-env.eval
+    message: >
+      Dynamic JavaScript execution (eval / Function). If any part of the
+      argument is attacker-controlled this is code injection. Rewrite without
+      a code-eval sink.
+    languages: [javascript]
+    severity: ERROR
+    metadata:
+      cwe: 'CWE-95'
+      source: https://github.com/semgrep/semgrep-rules/blob/40b8c63f75dc7c22c8a77482d73bfb864b146f7e/javascript/lang/security/detect-eval-with-expression.yaml
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+      - pattern: Function(...)
+
+  - id: sops-env.shell-exec
+    message: >
+      child_process exec/execSync with a non-literal command. A shell sees
+      that string. Pass an argv array to execFile/execFileSync/spawn instead,
+      or keep the command a string literal.
+    languages: [javascript]
+    severity: ERROR
+    metadata:
+      cwe: 'CWE-78'
+      source: https://github.com/semgrep/semgrep-rules/blob/40b8c63f75dc7c22c8a77482d73bfb864b146f7e/javascript/lang/security/detect-child-process.yaml
+    patterns:
+      # Bare `exec($CMD)` matches RegExp#exec, so only qualified sinks and
+      # execSync (which has no common non-shell namesake).
+      - pattern-either:
+          - pattern: execSync($CMD, ...)
+          - pattern: $CP.execSync($CMD, ...)
+          - pattern: $CP.exec($CMD, ...)
+      - pattern-not: execSync("...", ...)
+      - pattern-not: $CP.execSync("...", ...)
+      - pattern-not: $CP.exec("...", ...)
+
+  - id: sops-env.spawn-shell-true
+    message: >
+      spawn/execFile with `shell: true` hands the command to a shell, which
+      reintroduces injection through any interpolated argument. Drop the
+      option and pass an argv array.
+    languages: [javascript]
+    severity: ERROR
+    metadata:
+      cwe: 'CWE-78'
+      source: https://github.com/semgrep/semgrep-rules/blob/40b8c63f75dc7c22c8a77482d73bfb864b146f7e/javascript/lang/security/detect-child-process.yaml
+    pattern-either:
+      - pattern: '$FN($CMD, $ARGS, { ..., shell: true, ... })'
+      - pattern: '$FN($CMD, { ..., shell: true, ... })'
+
+  - id: sops-env.exec-template-string
+    message: >
+      Command built from a template string and passed to a child_process
+      call. Interpolated values become shell syntax. Pass an argv array.
+    languages: [javascript]
+    severity: ERROR
+    metadata:
+      cwe: 'CWE-78'
+      source: https://github.com/semgrep/semgrep-rules/blob/40b8c63f75dc7c22c8a77482d73bfb864b146f7e/javascript/lang/security/detect-child-process.yaml
+    pattern-either:
+      - pattern: execSync(`...${$X}...`, ...)
+      - pattern: $CP.execSync(`...${$X}...`, ...)
+      - pattern: $CP.exec(`...${$X}...`, ...)

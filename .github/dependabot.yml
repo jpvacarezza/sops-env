@@ -1,0 +1,43 @@
+# Dependabot version updates, deliberately scoped to GitHub Actions and NOTHING else.
+#
+# Why actions: workflows reference actions by mutable major tag
+# (`actions/checkout@v7`, `pnpm/action-setup@v4`, ...). A compromised tag would
+# run with the workflow's permissions, so this entry turns that gap into one
+# monthly pull request. Dependabot runs do not consume GitHub Actions minutes.
+#
+# `directories`, not `directory`, and both entries are load-bearing. For the
+# `github-actions` ecosystem `/` means `.github/workflows` and nothing else; an
+# action used from a composite in `.github/actions/*` must be listed too, or a
+# bump would move the workflow's copies and leave the composite's behind
+# (a partial bump is still a green PR). The glob covers the next composite.
+#
+# Why npm is NOT here: the supply-chain gate for npm lives in
+# pnpm-workspace.yaml (`minimumReleaseAge`), which refuses versions published
+# too recently at install time. Dependabot PRs would fight it:
+#   - security-update PRs are built with the release-age floor disabled, so they
+#     resolve a version published minutes ago and then fail the very install
+#     gate that CI runs;
+#   - `cooldown` below applies to version updates only, so it cannot fix that;
+#   - transitive advisories fall back to `pnpm audit --fix`, which rewrites the
+#     lockfile outside the gate.
+# npm version awareness is the weekly read-only issue from
+# `.github/workflows/deps-outdated.yml`, which opens no PRs. Do not add
+# `package-ecosystem: npm` without re-reading this.
+version: 2
+updates:
+  - package-ecosystem: 'github-actions'
+    directories:
+      - '/'
+      - '/.github/actions/*'
+    schedule:
+      interval: 'monthly'
+    groups:
+      # One PR for all actions instead of one each; scoped to this entry.
+      github-actions:
+        patterns: ['*']
+    cooldown:
+      # Same reasoning as minimumReleaseAge, for a surface that gate cannot see:
+      # give a compromised release time to be caught and yanked.
+      default-days: 7
+    commit-message:
+      prefix: 'chore(deps)'
