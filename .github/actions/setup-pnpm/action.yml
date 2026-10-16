@@ -6,7 +6,7 @@ runs:
   steps:
     # No `version:`: package.json `packageManager` pins pnpm, and giving both
     # can fail as "multiple versions of pnpm specified".
-    - uses: pnpm/action-setup@v4
+    - uses: pnpm/action-setup@v6
 
     - uses: actions/setup-node@v7
       with:
