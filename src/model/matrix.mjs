@@ -12,11 +12,10 @@
  * cells hold the same secret passes precomputed fingerprints, so "no value
  * reaches the model" is structural rather than a rule someone has to remember.
  */
-import { APP_SCOPES, APPS, DEPLOYABLE_APPS, SCOPES } from '../scopes.mjs';
 
 /** Apps that receive a scope's variables. `shared` merges into all of them. */
-export function receivingApps(scope, { appScopes = APP_SCOPES } = {}) {
-  return Object.entries(appScopes)
+export function receivingApps(ctx, scope) {
+  return Object.entries(ctx.appScopes)
     .filter(([, scopes]) => scopes.includes(scope))
     .map(([app]) => app);
 }
@@ -26,11 +25,11 @@ export function receivingApps(scope, { appScopes = APP_SCOPES } = {}) {
  *
  * A scope maps to its own app. `shared` has no single owner, so the first app
  * that declares the key wins — enough to render a marker, and `shared` is empty
- * on purpose today (its comment in `scopes.mjs` explains why the internal keys
+ * on purpose today (the config explains why the internal keys
  * are per consumer).
  */
-function schemaFor(scope, key, declarations) {
-  const candidates = APPS.includes(scope) ? [scope] : APPS;
+function schemaFor(ctx, scope, key, declarations) {
+  const candidates = ctx.apps.includes(scope) ? [scope] : ctx.apps;
 
   for (const app of candidates) {
     const declaration = declarations[app]?.[key];
@@ -55,18 +54,16 @@ export function countBySeverity(findings) {
   };
 }
 
-export function buildMatrix({
-  registry,
-  environments,
-  inventories,
-  declarations = {},
-  fingerprints = {},
-  exemptions = {},
-}) {
+export function buildMatrix(
+  ctx,
+  { environments, inventories, declarations = {}, fingerprints = {} },
+) {
+  const registry = ctx.registry;
+  const exemptions = ctx.notDriftWhenUnset;
   const findings = [];
   const totals = { set: 0, unset: 0, undeclared: 0 };
 
-  const scopes = SCOPES.map((scope) => {
+  const scopes = ctx.scopes.map((scope) => {
     const declared = registry[scope] ?? [];
 
     // An app scope with no platform to deploy to — `ingest` until slice 1b —
@@ -77,7 +74,7 @@ export function buildMatrix({
     // so it always keeps the full environment list, because it merges into
     // apps that ARE deployable.
     const scopeEnvironments =
-      APPS.includes(scope) && !DEPLOYABLE_APPS.includes(scope)
+      ctx.apps.includes(scope) && !ctx.deployableApps.includes(scope)
         ? environments.filter((environment) => environment === 'local')
         : environments;
 
@@ -96,7 +93,7 @@ export function buildMatrix({
 
     const rows = keys.map((key) => {
       const isDeclared = declared.includes(key);
-      const schema = schemaFor(scope, key, declarations);
+      const schema = schemaFor(ctx, scope, key, declarations);
       const cells = {};
       let presentSomewhere = false;
 
@@ -126,7 +123,7 @@ export function buildMatrix({
             environment,
             message:
               `${scope}.${key} in ${environment} is not ENC[…]. A plaintext ` +
-              'value under a sops metadata block is the accident `secrets:check` ' +
+              'value under a sops metadata block is the accident `sops-env check` ' +
               'exists to catch.',
           });
         }
@@ -140,7 +137,7 @@ export function buildMatrix({
             environment,
             message:
               `${scope}.${key} in ${environment} is not declared in ` +
-              'tools/secrets/scopes.mjs. `secrets:sync` refuses the whole ' +
+              'secrets.config.mjs. `sops-env sync` refuses the whole ' +
               'projection until it is.',
           });
         }
@@ -186,10 +183,17 @@ export function buildMatrix({
         });
       }
 
-      return { scope, key, declared: isDeclared, schema, cells };
+      return {
+        scope,
+        key,
+        declared: isDeclared,
+        note: ctx.notes[scope]?.[key] ?? null,
+        schema,
+        cells,
+      };
     });
 
-    return { scope, receivingApps: receivingApps(scope), rows };
+    return { scope, receivingApps: receivingApps(ctx, scope), rows };
   });
 
   return {

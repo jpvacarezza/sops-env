@@ -2,7 +2,7 @@
  * Extractors for the env-var contract.
  *
  * The same list of variables lives in four places: each app's Zod schema, its
- * `.env.example`, the scope registry in `scopes.mjs`, and the code that reads
+ * `.env.example`, the scope registry in `secrets.config.mjs`, and the code that reads
  * `process.env`. `env-contract.spec.mjs` compares them; this file is only the
  * reading.
  *
@@ -18,22 +18,36 @@
  * against the real files.
  */
 import { existsSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
-import { WORKSPACE_ROOT } from '../store/paths.mjs';
-import { APPS } from '../scopes.mjs';
+/** Absolute path of the app's schema module, or null when the app has none. */
+export function schemaFile(ctx, app) {
+  const schema = ctx.app[app]?.schema;
+  return schema ? resolve(ctx.root, schema.file) : null;
+}
 
-/** Where each app declares the variables it validates. */
-export const APP_SCHEMA_FILES = {
-  api: join(WORKSPACE_ROOT, 'apps/api/src/config/env.ts'),
-  web: join(WORKSPACE_ROOT, 'apps/web/src/env.schema.ts'),
-  admin: join(WORKSPACE_ROOT, 'apps/admin/src/env.schema.ts'),
-  ingest: join(WORKSPACE_ROOT, 'apps/ingest/src/config/env.ts'),
-};
+/** That app's `.env.example`, the documented contract. */
+export function exampleFile(ctx, app) {
+  return resolve(ctx.root, ctx.app[app].example);
+}
 
-/** That app's `.env.example`, the documented contract (technical spec §18). */
-export function appExampleFile(app) {
-  return join(WORKSPACE_ROOT, 'apps', app, '.env.example');
+/**
+ * Expand one root pattern. Only `*` as a whole path segment is supported
+ * (`apps/*\/src`): that is the shape a monorepo needs, and a full glob library
+ * would be the package's first dependency.
+ */
+function expandPattern(root, pattern) {
+  let paths = [root];
+  for (const segment of pattern.split('/')) {
+    paths = paths.flatMap((base) => {
+      if (segment !== '*') return [join(base, segment)];
+      if (!existsSync(base)) return [];
+      return readdirSync(base)
+        .filter((entry) => statSync(join(base, entry)).isDirectory())
+        .map((entry) => join(base, entry));
+    });
+  }
+  return paths;
 }
 
 /**
@@ -225,45 +239,31 @@ function* walk(dir) {
 }
 
 /**
- * Every module whose `process.env` reads are part of the contract.
- *
- * `apps/auth-e2e` is inside the net on purpose: it boots the real API and reads
- * the API's own variables, so a variable added there is the same debt as one
- * added anywhere else. Tests are excluded because a test may legitimately
- * fabricate an environment to assert against.
+ * Every module whose `process.env` reads are part of the contract: the
+ * configured source roots, minus tests, plus whichever `extraFiles` exist.
  *
  * Walks the tree rather than shelling out to `git ls-files`, so this behaves
  * the same in a tarball as in a clone.
  */
-export function productionSourceFiles() {
-  const packagesDir = join(WORKSPACE_ROOT, 'packages');
-  const packageRoots = readdirSync(packagesDir).flatMap((name) => [
-    join(packagesDir, name, 'src'),
-    // `cjs/` is not a build artefact here: `next-config.cjs` is hand-written
-    // and is where SENTRY_AUTH_TOKEN is read.
-    join(packagesDir, name, 'cjs'),
-  ]);
-
-  // Named subdirectories rather than walking `apps/` and `packages/` whole.
-  // A blanket walk picks up build output that happens to sit in the tree —
-  // `packages/ui/storybook-static/` reads NODE_DEBUG — and no denylist of
-  // artefact directory names stays complete.
-  const roots = [
-    ...APPS.map((app) => join(WORKSPACE_ROOT, 'apps', app, 'src')),
-    join(WORKSPACE_ROOT, 'apps/auth-e2e/src'),
-    ...packageRoots,
-  ];
-
+export function productionSourceFiles(ctx) {
+  const roots = ctx.contract.sourceRoots.flatMap((pattern) =>
+    expandPattern(ctx.root, pattern),
+  );
   const files = roots.flatMap((root) => [...walk(root)]);
 
-  // Next config is not under `src/` and is exactly where build-time variables
-  // are read — `NEXT_PUBLIC_WEB_BUILD_ID` is assigned in one.
-  for (const app of APPS) {
-    const config = join(WORKSPACE_ROOT, 'apps', app, 'next.config.js');
-    if (existsSync(config)) files.push(config);
+  for (const pattern of ctx.contract.extraFiles) {
+    for (const candidate of expandPattern(ctx.root, pattern)) {
+      if (existsSync(candidate) && statSync(candidate).isFile())
+        files.push(candidate);
+    }
   }
 
-  return files.filter((file) => !/[\\/](node_modules|out-tsc)[\\/]/.test(file));
+  const ignored = new RegExp(
+    `[\\\\/](${ctx.contract.ignore.join('|')})[\\\\/]`,
+  );
+  return ctx.contract.ignore.length > 0
+    ? files.filter((file) => !ignored.test(file))
+    : files;
 }
 
 /** Distinct `process.env.X` reads in a module, in first-seen order. */

@@ -1,10 +1,17 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
+import { fixtureCtx, registryCtx } from '../../test/helpers/ctx.mjs';
 import {
+  exampleFile,
+  productionSourceFiles,
   readEnvReads,
   readExampleKeys,
   readSchemaDeclarations,
   readSchemaKeys,
+  schemaFile,
 } from './env-contract.mjs';
 
 /**
@@ -157,11 +164,11 @@ const EnvSchema = z
 
 describe('readExampleKeys', () => {
   const example = `
-# @tripgency/api runtime env.
+# api runtime env.
 NODE_ENV=development
 
 # Optional, has a default.
-# VENDOR_DATA_DIR=/mnt/d/tripgency-data
+# VENDOR_DATA_DIR=/mnt/d/vendor-data
 NEXT_PUBLIC_GA_MEASUREMENT_ID=
 `;
 
@@ -214,4 +221,48 @@ const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
       'process.env.LOG_LEVEL; process.env.LOG_LEVEL; process.env.PORT;';
     expect(readEnvReads(source)).toEqual(['LOG_LEVEL', 'PORT']);
   });
+});
+
+describe('productionSourceFiles', () => {
+  it('walks the configured roots and skips tests', () => {
+    const ctx = fixtureCtx();
+    const files = productionSourceFiles(ctx).map((file) => ctx.relative(file));
+
+    expect(files).toEqual([
+      'apps/api/src/env.ts',
+      'apps/web/src/env.schema.ts',
+      'apps/web/src/uses-env.ts',
+    ]);
+  });
+
+  it('expands a * segment and adds extraFiles that exist', () => {
+    const ctx = fixtureCtx({
+      contract: {
+        sourceRoots: ['apps/*/src'],
+        extraFiles: ['apps/*/.env.example', 'apps/*/missing.js'],
+      },
+    });
+    const files = productionSourceFiles(ctx).map((file) => ctx.relative(file));
+
+    expect(files).toContain('apps/api/.env.example');
+    expect(files.some((file) => file.endsWith('missing.js'))).toBe(false);
+  });
+});
+
+describe('schemaFile and exampleFile', () => {
+  it('resolve from the app config, and schemaFile is null when unconfigured', () => {
+    const ctx = fixtureCtx();
+    expect(ctx.relative(schemaFile(ctx, 'api'))).toBe('apps/api/src/env.ts');
+    expect(ctx.relative(exampleFile(ctx, 'web'))).toBe('apps/web/.env.example');
+    expect(schemaFile(registryCtx({ api: [] }), 'api')).toBeNull();
+  });
+});
+
+it('reads process.env from the fixture reader and ignores the comment', () => {
+  const ctx = fixtureCtx();
+  expect(
+    readEnvReads(
+      readFileSync(join(ctx.root, 'apps/web/src/uses-env.ts'), 'utf8'),
+    ),
+  ).toEqual(['NEXT_PUBLIC_SITE_URL', 'BUILD_ID']);
 });

@@ -3,13 +3,16 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import {
+  declaresEncryptedKey,
   parseInventory,
   readEnvironment,
   readLastModified,
   readRecipients,
 } from './inventory.mjs';
 import { secretsFilePath } from './paths.mjs';
-import { ENVIRONMENTS, SCOPES } from '../scopes.mjs';
+import { fixtureCtx, registryCtx } from '../../test/helpers/ctx.mjs';
+
+const ctx = registryCtx({ shared: [], api: [], web: [], admin: [] });
 
 const enc = (tag) =>
   `ENC[AES256_GCM,data:${tag},iv:iv${tag}=,tag:tag${tag}==,type:str]`;
@@ -21,7 +24,7 @@ const body = (indent) =>
     `${indent}DATABASE_URL: ${enc('aaa')}`,
     `${indent}LOG_LEVEL: ${enc('bbb')}`,
     'web:',
-    `${indent}TRIPGENCY_API_URL: ${enc('ccc')}`,
+    `${indent}API_URL: ${enc('ccc')}`,
     'sops:',
     `${indent}kms: []`,
     `${indent}age:`,
@@ -46,12 +49,12 @@ ${FOUR_SPACE}`;
 
 describe('parseInventory', () => {
   it('reads scopes and their keys', () => {
-    expect(Object.keys(parseInventory(FOUR_SPACE))).toEqual([
+    expect(Object.keys(parseInventory(ctx, FOUR_SPACE))).toEqual([
       'shared',
       'api',
       'web',
     ]);
-    expect(Object.keys(parseInventory(FOUR_SPACE).api.keys)).toEqual([
+    expect(Object.keys(parseInventory(ctx, FOUR_SPACE).api.keys)).toEqual([
       'DATABASE_URL',
       'LOG_LEVEL',
     ]);
@@ -60,17 +63,19 @@ describe('parseInventory', () => {
   // Every file is 4-space today because that is what sops writes, but the
   // reader must not encode that: a `sops` upgrade is allowed to reindent.
   it('does not care whether the file is 2-space or 4-space', () => {
-    expect(parseInventory(TWO_SPACE)).toEqual(parseInventory(FOUR_SPACE));
+    expect(parseInventory(ctx, TWO_SPACE)).toEqual(
+      parseInventory(ctx, FOUR_SPACE),
+    );
   });
 
   it('records `shared: {}` as present and empty, not as missing', () => {
-    expect(parseInventory(FOUR_SPACE).shared).toEqual({ keys: {} });
+    expect(parseInventory(ctx, FOUR_SPACE).shared).toEqual({ keys: {} });
   });
 
   it('marks an ENC[ value as encrypted', () => {
-    expect(parseInventory(FOUR_SPACE).api.keys.DATABASE_URL.encrypted).toBe(
-      true,
-    );
+    expect(
+      parseInventory(ctx, FOUR_SPACE).api.keys.DATABASE_URL.encrypted,
+    ).toBe(true);
   });
 
   it('marks a plaintext value as not encrypted', () => {
@@ -78,30 +83,28 @@ describe('parseInventory', () => {
       '\n',
     );
 
-    expect(parseInventory(leaked).api.keys.DATABASE_URL.encrypted).toBe(false);
+    expect(parseInventory(ctx, leaked).api.keys.DATABASE_URL.encrypted).toBe(
+      false,
+    );
   });
 
   it('reports the line each key sits on', () => {
-    expect(parseInventory(FOUR_SPACE).api.keys.DATABASE_URL.line).toBe(3);
+    expect(parseInventory(ctx, FOUR_SPACE).api.keys.DATABASE_URL.line).toBe(3);
   });
 
   // The `sops:` trailer is the trap: its `mac:` and `version:` lines are
   // indented exactly like a variable, so a reader that does not end the scope
   // region at a non-scope top-level key files them under `web`.
   it('takes nothing from the sops trailer', () => {
-    const inventory = parseInventory(FOUR_SPACE);
+    const inventory = parseInventory(ctx, FOUR_SPACE);
 
-    expect(Object.keys(inventory.web.keys)).toEqual(['TRIPGENCY_API_URL']);
+    expect(Object.keys(inventory.web.keys)).toEqual(['API_URL']);
     expect(inventory.sops).toBeUndefined();
 
     const everyKey = Object.values(inventory).flatMap((scope) =>
       Object.keys(scope.keys),
     );
-    expect(everyKey).toEqual([
-      'DATABASE_URL',
-      'LOG_LEVEL',
-      'TRIPGENCY_API_URL',
-    ]);
+    expect(everyKey).toEqual(['DATABASE_URL', 'LOG_LEVEL', 'API_URL']);
   });
 
   it('takes nothing from the encrypted comment preamble', () => {
@@ -112,8 +115,8 @@ describe('parseInventory', () => {
           Object.keys(entries.keys),
         ]),
       );
-    const withComments = parseInventory(WITH_ENCRYPTED_COMMENTS);
-    const without = parseInventory(FOUR_SPACE);
+    const withComments = parseInventory(ctx, WITH_ENCRYPTED_COMMENTS);
+    const without = parseInventory(ctx, FOUR_SPACE);
 
     expect(shape(withComments)).toEqual(shape(without));
     // And the reported lines shift by exactly those two comment lines, which is
@@ -128,20 +131,20 @@ describe('parseInventory', () => {
   // offer to add keys that already exist, and adding is overwriting.
   it('refuses a flow mapping instead of reporting the scope empty', () => {
     expect(() =>
-      parseInventory('api: { DATABASE_URL: "x" }', {
+      parseInventory(ctx, 'api: { DATABASE_URL: "x" }', {
         file: 'secrets/local.enc.yaml',
       }),
     ).toThrow(/secrets\/local\.enc\.yaml:1: scope "api" is followed by/);
   });
 
   it('still accepts the empty flow mapping, which is how `shared` is written', () => {
-    expect(() => parseInventory('shared: {}')).not.toThrow();
+    expect(() => parseInventory(ctx, 'shared: {}')).not.toThrow();
   });
 
   it('accepts a trailing comment on the scope line, which carries nothing', () => {
     const commented = ['api: # the api scope', '    A: ENC[a]', ''].join('\n');
 
-    expect(Object.keys(parseInventory(commented).api.keys)).toEqual(['A']);
+    expect(Object.keys(parseInventory(ctx, commented).api.keys)).toEqual(['A']);
   });
 
   // A quoted key is legal YAML, and skipping it shows a variable as unset while
@@ -150,13 +153,13 @@ describe('parseInventory', () => {
   it('refuses a quoted key rather than dropping it', () => {
     const quoted = ['api:', '    "DATABASE_URL": ENC[a]', ''].join('\n');
 
-    expect(() => parseInventory(quoted)).toThrow(/cannot read/);
+    expect(() => parseInventory(ctx, quoted)).toThrow(/cannot read/);
   });
 
   it('refuses an indented line it cannot read as a variable', () => {
     const odd = ['api:', '    database_url: ENC[a]', ''].join('\n');
 
-    expect(() => parseInventory(odd)).toThrow(/UPPER_SNAKE_CASE/);
+    expect(() => parseInventory(ctx, odd)).toThrow(/UPPER_SNAKE_CASE/);
   });
 
   // Overwriting the first block would hide every key in it.
@@ -165,17 +168,17 @@ describe('parseInventory', () => {
       '\n',
     );
 
-    expect(() => parseInventory(twice)).toThrow(/appears twice/);
+    expect(() => parseInventory(ctx, twice)).toThrow(/appears twice/);
   });
 
   it('refuses a scalar after the scope name', () => {
-    expect(() => parseInventory('api: oops')).toThrow(/is followed by/);
+    expect(() => parseInventory(ctx, 'api: oops')).toThrow(/is followed by/);
   });
 
   it('ignores a top-level key that is not a scope', () => {
     const extra = ['metadata:', '    NOT_A_VARIABLE: ENC[x]', ''].join('\n');
 
-    expect(parseInventory(extra)).toEqual({});
+    expect(parseInventory(ctx, extra)).toEqual({});
   });
 });
 
@@ -204,15 +207,19 @@ describe('readLastModified', () => {
 // Against the real files, the way trust-proxy-ciphertext.spec.mjs does: a line
 // scanner that only ever ran against its own fixture is a fixture test.
 describe('the reader still matches the real ciphertext', () => {
-  for (const environment of ENVIRONMENTS) {
+  const real = fixtureCtx();
+  for (const environment of real.environments) {
     describe(environment, () => {
-      const file = secretsFilePath(environment);
+      const file = secretsFilePath(real, environment);
       const text = readFileSync(file, 'utf8');
-      const { inventory, recipients, lastModified } = readEnvironment(file);
+      const { inventory, recipients, lastModified } = readEnvironment(
+        real,
+        file,
+      );
 
       it('finds only real scopes', () => {
         for (const scope of Object.keys(inventory)) {
-          expect(SCOPES).toContain(scope);
+          expect(real.scopes).toContain(scope);
         }
       });
 
@@ -253,4 +260,20 @@ describe('the reader still matches the real ciphertext', () => {
       });
     });
   }
+});
+
+describe('declaresEncryptedKey', () => {
+  const text = readFileSync(secretsFilePath(fixtureCtx(), 'staging'), 'utf8');
+
+  it('finds a key whose value is ciphertext, without decrypting', () => {
+    expect(declaresEncryptedKey(text, 'DATABASE_URL')).toBe(true);
+  });
+
+  it('does not find a key that is absent', () => {
+    expect(declaresEncryptedKey(text, 'NOPE')).toBe(false);
+  });
+
+  it('does not match a plaintext value', () => {
+    expect(declaresEncryptedKey('api:\n    A: plain\n', 'A')).toBe(false);
+  });
 });

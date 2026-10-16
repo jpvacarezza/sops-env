@@ -1,25 +1,35 @@
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 
-import { ENVIRONMENTS } from '../scopes.mjs';
-
-/** Repository root, resolved from this file rather than the caller's CWD. */
-export const WORKSPACE_ROOT = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  '../..',
-);
-
-/** Ciphertext file for one environment. Never accepts an arbitrary path. */
-export function secretsFilePath(environment, { root = WORKSPACE_ROOT } = {}) {
-  if (!ENVIRONMENTS.includes(environment)) {
-    throw new Error(
-      `Unknown environment "${environment}". Expected one of: ${ENVIRONMENTS.join(', ')}.`,
-    );
-  }
-  return join(root, 'secrets', `${environment}.enc.yaml`);
+/** `<root>/<store.dir>`. */
+export function storeDir(ctx) {
+  return join(ctx.root, ctx.store.dir);
 }
 
-/** Where `secrets:materialize` writes a generated dotenv file. */
-export function appEnvFilePath(app, { root = WORKSPACE_ROOT } = {}) {
-  return join(root, 'apps', app, '.env.local');
+/** Ciphertext file for one environment. Never accepts an arbitrary path. */
+export function secretsFilePath(ctx, environment) {
+  if (!ctx.environments.includes(environment)) {
+    throw new Error(
+      `Unknown environment "${environment}". Expected one of: ${ctx.environments.join(', ')}.`,
+    );
+  }
+  return join(
+    storeDir(ctx),
+    ctx.store.file.replace('<environment>', environment),
+  );
+}
+
+/** Where `materialize` writes a generated dotenv file. */
+export function appEnvFilePath(ctx, app) {
+  const entry = ctx.app[app];
+  if (!entry) {
+    throw new Error(
+      `Unknown app "${app}". Expected one of: ${ctx.apps.join(', ')}.`,
+    );
+  }
+  return join(ctx.root, entry.dotenv);
+}
+
+/** The sops creation-rules file. */
+export function sopsConfigPath(ctx) {
+  return join(ctx.root, ctx.store.sopsConfig);
 }

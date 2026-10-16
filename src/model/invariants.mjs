@@ -19,30 +19,6 @@
 
 /** @typedef {{ scope: string, key: string }} Ref */
 
-export const PAIRED_KEYS = [
-  {
-    name: 'api ↔ web',
-    left: { scope: 'api', key: 'TRIPGENCY_INTERNAL_API_KEY_WEB' },
-    right: { scope: 'web', key: 'TRIPGENCY_INTERNAL_API_KEY' },
-    relation: 'equal',
-    why: 'web presents this key to the API on every BFF call; a mismatch is a blanket 401.',
-  },
-  {
-    name: 'api ↔ admin',
-    left: { scope: 'api', key: 'TRIPGENCY_INTERNAL_API_KEY_ADMIN' },
-    right: { scope: 'admin', key: 'TRIPGENCY_INTERNAL_API_KEY' },
-    relation: 'equal',
-    why: 'same contract as web, on the admin perimeter.',
-  },
-  {
-    name: 'web ≠ admin',
-    left: { scope: 'api', key: 'TRIPGENCY_INTERNAL_API_KEY_WEB' },
-    right: { scope: 'api', key: 'TRIPGENCY_INTERNAL_API_KEY_ADMIN' },
-    relation: 'differ',
-    why: 'distinct per consumer so a leak in one app cannot mint the other app’s perimeter.',
-  },
-];
-
 /**
  * Check every pair for one environment.
  *
@@ -51,8 +27,8 @@ export const PAIRED_KEYS = [
  * violation: an unset variable is the other checks' business, and calling it a
  * mismatch here would report the same problem twice.
  */
-export function checkPairs(lookup, { pairs = PAIRED_KEYS } = {}) {
-  return pairs.map((pair) => {
+export function checkPairs(ctx, lookup) {
+  return ctx.pairs.map((pair) => {
     const left = lookup(pair.left.scope, pair.left.key);
     const right = lookup(pair.right.scope, pair.right.key);
 
@@ -86,21 +62,17 @@ export function pairFindings(environment, results) {
 }
 
 /**
- * Values that are obviously not real yet.
+ * Values that are obviously not real yet. A sentinel is a repo convention, so
+ * the pattern is `ctx.placeholderPattern`.
  *
- * A sentinel is a repo convention, so no generic tool can know it.
- * `secrets/STAGING-PROD-CHECKLIST.md` names REPLACE_ME, and `.env.example`
- * carries `change-me` for local placeholders.
+ * `{ scope, key }` for every value that still looks like a placeholder.
  */
-export const PLACEHOLDER = /REPLACE_ME|change-me/i;
-
-/** `{ scope, key }` for every value that still looks like a placeholder. */
-export function findPlaceholders(document, { pattern = PLACEHOLDER } = {}) {
+export function findPlaceholders(ctx, document) {
   return Object.entries(document)
     .filter(([, entries]) => entries && typeof entries === 'object')
     .flatMap(([scope, entries]) =>
       Object.entries(entries)
-        .filter(([, value]) => pattern.test(String(value)))
+        .filter(([, value]) => ctx.placeholderPattern.test(String(value)))
         .map(([key]) => ({ scope, key })),
     );
 }
@@ -115,7 +87,7 @@ export function placeholderFindings(environment, placeholders) {
     message:
       `${scope}.${key} in ${environment} still holds a placeholder. ` +
       (environment === 'local'
-        ? 'Local placeholders are deliberate (secrets/README.md), so this is a note.'
-        : 'secrets/STAGING-PROD-CHECKLIST.md is the list this replaces.'),
+        ? 'Local placeholders are deliberate, so this is a note.'
+        : 'Replace it before this environment is synced.'),
   }));
 }

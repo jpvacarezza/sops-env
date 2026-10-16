@@ -1,14 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import { checkPairs, PAIRED_KEYS, pairFindings } from './invariants.mjs';
-import { SCOPE_KEYS } from '../scopes.mjs';
+import { fixtureCtx, registryCtx } from '../../test/helpers/ctx.mjs';
+import {
+  checkPairs,
+  findPlaceholders,
+  pairFindings,
+  placeholderFindings,
+} from './invariants.mjs';
 
 /** A lookup over a plain `{ scope: { key: token } }` fixture. */
 const from = (document) => (scope, key) => document[scope]?.[key];
 
-const WEB = 'TRIPGENCY_INTERNAL_API_KEY_WEB';
-const ADMIN = 'TRIPGENCY_INTERNAL_API_KEY_ADMIN';
-const KEY = 'TRIPGENCY_INTERNAL_API_KEY';
+const WEB = 'INTERNAL_API_KEY_WEB';
+const ADMIN = 'INTERNAL_API_KEY_ADMIN';
+const KEY = 'INTERNAL_API_KEY';
 
 const consistent = {
   api: { [WEB]: 'web-token', [ADMIN]: 'admin-token' },
@@ -19,33 +24,87 @@ const consistent = {
 const status = (results, name) =>
   results.find((result) => result.name === name).status;
 
-describe('PAIRED_KEYS', () => {
-  // A pair naming a key nobody declares can never fire, and would sit here
-  // looking like a control forever.
-  it('only references keys the registry declares', () => {
-    for (const pair of PAIRED_KEYS) {
-      for (const side of [pair.left, pair.right]) {
-        expect(SCOPE_KEYS[side.scope]).toContain(side.key);
-      }
-    }
+const REGISTRY = {
+  shared: [],
+  api: [WEB, ADMIN],
+  web: [KEY],
+  admin: [KEY],
+};
+
+/** The three BFF→API pairs, as test data. */
+const PAIRS = [
+  {
+    name: 'api ↔ web',
+    left: { scope: 'api', key: WEB },
+    right: { scope: 'web', key: KEY },
+    relation: 'equal',
+    why: 'web presents this key to the API on every BFF call; a mismatch is a blanket 401.',
+  },
+  {
+    name: 'api ↔ admin',
+    left: { scope: 'api', key: ADMIN },
+    right: { scope: 'admin', key: KEY },
+    relation: 'equal',
+    why: 'same contract as web, on the admin perimeter.',
+  },
+  {
+    name: 'web ≠ admin',
+    left: { scope: 'api', key: WEB },
+    right: { scope: 'api', key: ADMIN },
+    relation: 'differ',
+    why: 'distinct per consumer so a leak in one app cannot mint the other app’s perimeter.',
+  },
+];
+
+const CTX = registryCtx(REGISTRY, { extra: { pairs: PAIRS } });
+
+describe('the fixture pairs', () => {
+  it('explains why each pair exists', () => {
+    const { pairs } = fixtureCtx();
+
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].why.length).toBeGreaterThan(20);
+  });
+});
+
+describe('findPlaceholders', () => {
+  it('finds the default placeholders in a document', () => {
+    expect(
+      findPlaceholders(fixtureCtx(), { api: { A: 'change-me', B: 'real' } }),
+    ).toEqual([{ scope: 'api', key: 'A' }]);
   });
 
-  it('explains why each pair exists', () => {
-    for (const pair of PAIRED_KEYS) {
-      expect(pair.why.length).toBeGreaterThan(20);
-    }
+  it('honours a configured pattern', () => {
+    const ctx = fixtureCtx({ placeholderPattern: /TODO/ });
+
+    expect(
+      findPlaceholders(ctx, { api: { A: 'change-me', B: 'TODO' } }),
+    ).toEqual([{ scope: 'api', key: 'B' }]);
+  });
+});
+
+describe('placeholderFindings', () => {
+  it('does not name consumer files', () => {
+    const [local] = placeholderFindings('local', [{ scope: 'api', key: 'A' }]);
+    const [staging] = placeholderFindings('staging', [
+      { scope: 'api', key: 'A' },
+    ]);
+
+    expect(local.message).toMatch(/deliberate/);
+    expect(staging.message).toMatch(/Replace it before/);
   });
 });
 
 describe('checkPairs', () => {
   it('passes a consistent environment', () => {
-    const results = checkPairs(from(consistent));
+    const results = checkPairs(CTX, from(consistent));
 
     expect(results.map((result) => result.status)).toEqual(['ok', 'ok', 'ok']);
   });
 
   it('flags a web key that does not match the API side', () => {
     const results = checkPairs(
+      CTX,
       from({ ...consistent, web: { [KEY]: 'stale-token' } }),
     );
 
@@ -55,6 +114,7 @@ describe('checkPairs', () => {
 
   it('flags an admin key that does not match the API side', () => {
     const results = checkPairs(
+      CTX,
       from({ ...consistent, admin: { [KEY]: 'stale-token' } }),
     );
 
@@ -65,6 +125,7 @@ describe('checkPairs', () => {
   // point of keeping it here too is that all three verdicts read together.
   it('flags web and admin sharing one key', () => {
     const results = checkPairs(
+      CTX,
       from({
         api: { [WEB]: 'same', [ADMIN]: 'same' },
         web: { [KEY]: 'same' },
@@ -80,6 +141,7 @@ describe('checkPairs', () => {
   // twice and send the reader looking for a second cause.
   it('reports a pair with a missing side as unknown, not violated', () => {
     const results = checkPairs(
+      CTX,
       from({ api: { [WEB]: 'x' }, web: {}, admin: {} }),
     );
 
@@ -90,7 +152,7 @@ describe('checkPairs', () => {
   });
 
   it('never returns the tokens it compared', () => {
-    const results = checkPairs(from(consistent));
+    const results = checkPairs(CTX, from(consistent));
 
     expect(JSON.stringify(results)).not.toContain('web-token');
     expect(JSON.stringify(results)).not.toContain('admin-token');
@@ -99,17 +161,20 @@ describe('checkPairs', () => {
 
 describe('pairFindings', () => {
   it('says nothing when every pair holds', () => {
-    expect(pairFindings('staging', checkPairs(from(consistent)))).toEqual([]);
+    expect(pairFindings('staging', checkPairs(CTX, from(consistent)))).toEqual(
+      [],
+    );
   });
 
   it('says nothing for an unknown pair', () => {
-    const results = checkPairs(from({ api: {}, web: {}, admin: {} }));
+    const results = checkPairs(CTX, from({ api: {}, web: {}, admin: {} }));
 
     expect(pairFindings('staging', results)).toEqual([]);
   });
 
   it('names the environment, both sides and the consequence', () => {
     const results = checkPairs(
+      CTX,
       from({ ...consistent, web: { [KEY]: 'stale-token' } }),
     );
     const [finding] = pairFindings('production', results);
@@ -126,6 +191,7 @@ describe('pairFindings', () => {
 
   it('uses a distinct code for two keys that must differ', () => {
     const results = checkPairs(
+      CTX,
       from({
         api: { [WEB]: 'same', [ADMIN]: 'same' },
         web: { [KEY]: 'same' },
@@ -139,6 +205,7 @@ describe('pairFindings', () => {
 
   it('never puts a token in a message', () => {
     const results = checkPairs(
+      CTX,
       from({ ...consistent, web: { [KEY]: 'stale-token' } }),
     );
 

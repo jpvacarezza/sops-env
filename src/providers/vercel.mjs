@@ -7,7 +7,7 @@ import { vercelVarType } from '../model/sync-plan.mjs';
  * failing with ENV_CONFLICT. Values are never returned in the summary.
  */
 export async function upsertVercelEnv(
-  { token, teamId, projectId, targets, env },
+  { token, teamId, projectId, targets, env, ctx },
   { fetchImpl = globalThis.fetch } = {},
 ) {
   if (typeof fetchImpl !== 'function') {
@@ -20,7 +20,7 @@ export async function upsertVercelEnv(
   const body = keys.map((key) => ({
     key,
     value: env[key],
-    type: vercelVarType(key),
+    type: vercelVarType(ctx, key),
     target: targets,
   }));
 

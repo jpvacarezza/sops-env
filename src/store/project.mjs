@@ -1,5 +1,3 @@
-import { APP_SCOPES, APPS, SCOPES, SCOPE_KEYS } from '../scopes.mjs';
-
 /**
  * Validate a decrypted secrets document against the scope registry.
  *
@@ -7,7 +5,7 @@ import { APP_SCOPES, APPS, SCOPES, SCOPE_KEYS } from '../scopes.mjs';
  * deployment platform, and both are worse places to discover that a key was
  * filed under the wrong audience.
  */
-export function assertValidDocument(doc, { registry = SCOPE_KEYS } = {}) {
+export function assertValidDocument(ctx, doc) {
   if (!doc || typeof doc !== 'object' || Array.isArray(doc)) {
     throw new Error('Secrets document must be a mapping of scope → variables.');
   }
@@ -15,9 +13,9 @@ export function assertValidDocument(doc, { registry = SCOPE_KEYS } = {}) {
   const problems = [];
 
   for (const [scope, entries] of Object.entries(doc)) {
-    if (!SCOPES.includes(scope)) {
+    if (!ctx.scopes.includes(scope)) {
       problems.push(
-        `unknown scope "${scope}" (expected one of ${SCOPES.join(', ')})`,
+        `unknown scope "${scope}" (expected one of ${ctx.scopes.join(', ')})`,
       );
       continue;
     }
@@ -26,11 +24,11 @@ export function assertValidDocument(doc, { registry = SCOPE_KEYS } = {}) {
       continue;
     }
 
-    const allowed = new Set(registry[scope] ?? []);
+    const allowed = new Set(ctx.registry[scope] ?? []);
     for (const [key, value] of Object.entries(entries)) {
       if (!allowed.has(key)) {
         problems.push(
-          `"${key}" is not declared for scope "${scope}" in tools/secrets/scopes.mjs`,
+          `"${key}" is not declared for scope "${scope}" in secrets.config.mjs`,
         );
         continue;
       }
@@ -38,18 +36,6 @@ export function assertValidDocument(doc, { registry = SCOPE_KEYS } = {}) {
         problems.push(
           `"${key}" in scope "${scope}" is ${typeof value}, not a string — ` +
             'quote it in YAML ("true", "1"), because environment variables are text',
-        );
-      }
-    }
-  }
-
-  const sharedKeys = new Set(registry.shared ?? []);
-  for (const app of APPS) {
-    for (const key of registry[app] ?? []) {
-      if (sharedKeys.has(key)) {
-        problems.push(
-          `"${key}" is declared in both "shared" and "${app}"; those scopes merge, ` +
-            'so keep it in exactly one',
         );
       }
     }
@@ -69,15 +55,15 @@ export function assertValidDocument(doc, { registry = SCOPE_KEYS } = {}) {
  * that only production sets, and every app's Zod schema is what decides
  * whether the result is complete.
  */
-export function projectEnv(doc, app, { registry = SCOPE_KEYS } = {}) {
-  const scopes = APP_SCOPES[app];
+export function projectEnv(ctx, doc, app) {
+  const scopes = ctx.appScopes[app];
   if (!scopes) {
     throw new Error(
-      `Unknown app "${app}" (expected one of ${APPS.join(', ')}).`,
+      `Unknown app "${app}" (expected one of ${ctx.apps.join(', ')}).`,
     );
   }
 
-  assertValidDocument(doc, { registry });
+  assertValidDocument(ctx, doc);
 
   const env = {};
   for (const scope of scopes) {

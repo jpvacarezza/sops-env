@@ -15,8 +15,6 @@
  */
 import { readFileSync } from 'node:fs';
 
-import { SCOPES } from '../scopes.mjs';
-
 /** A column-0 mapping key: `api:`, `sops:`, `shared: {}`. */
 const TOP_LEVEL = /^([A-Za-z_][A-Za-z0-9_]*):[ \t]*(.*)$/;
 /** An indented entry. The name class excludes `-`, so `- recipient:` never matches. */
@@ -30,10 +28,7 @@ const ENTRY = /^[ \t]+([A-Z][A-Z0-9_]*):[ \t]*(.*)$/;
  * then believe the scope has no variables and offer to *add* keys that already
  * exist, which is how you overwrite a value you meant to leave alone.
  */
-export function parseInventory(
-  text,
-  { scopes = SCOPES, file = '<text>' } = {},
-) {
+export function parseInventory(ctx, text, { file = '<text>' } = {}) {
   const inventory = {};
   let scope = null;
 
@@ -49,7 +44,7 @@ export function parseInventory(
       // Any column-0 key that is not a scope ends the scope region. `sops:`
       // above all: its `age:` list and `mac:`/`version:` lines are indented and
       // would otherwise read as variables of whichever scope came last.
-      scope = scopes.includes(name) ? name : null;
+      scope = ctx.scopes.includes(name) ? name : null;
       if (!scope) return;
 
       // A trailing comment is legal and carries nothing. Anything else after
@@ -118,12 +113,21 @@ export function readLastModified(text) {
 }
 
 /** Everything readable from one environment's file without a key. */
-export function readEnvironment(file, { readFile = readFileSync } = {}) {
+export function readEnvironment(ctx, file, { readFile = readFileSync } = {}) {
   const text = readFile(file, 'utf8');
 
   return {
-    inventory: parseInventory(text, { file }),
+    inventory: parseInventory(ctx, text, { file }),
     recipients: readRecipients(text),
     lastModified: readLastModified(text),
   };
+}
+
+/**
+ * Whether `key` is declared with a ciphertext value anywhere in the document.
+ * Key names are plaintext in a SOPS file, so this runs with no age key — a
+ * consumer's CI can gate "staging declares TRUST_PROXY" without decrypting.
+ */
+export function declaresEncryptedKey(text, key) {
+  return new RegExp(`^\\s+${key}:\\s+ENC\\[`, 'm').test(text);
 }

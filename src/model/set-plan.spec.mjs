@@ -8,18 +8,20 @@ import {
   sopsIndex,
   unsetArgs,
 } from './set-plan.mjs';
-import { ENVIRONMENTS, SCOPE_KEYS } from '../scopes.mjs';
+import { registryCtx } from '../../test/helpers/ctx.mjs';
 
 const REGISTRY = {
   shared: [],
   api: ['DATABASE_URL'],
-  web: ['TRIPGENCY_API_URL'],
+  web: ['API_URL'],
   admin: [],
 };
 
+const CTX = registryCtx(REGISTRY);
+
 describe('parseSetArgs', () => {
   it('reads environment, scope and key', () => {
-    expect(parseSetArgs(['staging', 'api', 'DATABASE_URL'])).toEqual({
+    expect(parseSetArgs(CTX, ['staging', 'api', 'DATABASE_URL'])).toEqual({
       environments: ['staging'],
       scope: 'api',
       key: 'DATABASE_URL',
@@ -27,94 +29,72 @@ describe('parseSetArgs', () => {
   });
 
   it('expands `all` to every environment', () => {
-    expect(parseSetArgs(['all', 'api', 'DATABASE_URL']).environments).toEqual(
-      ENVIRONMENTS,
-    );
+    expect(
+      parseSetArgs(CTX, ['all', 'api', 'DATABASE_URL']).environments,
+    ).toEqual(CTX.environments);
   });
 
   it('names the valid environments when given an unknown one', () => {
-    expect(() => parseSetArgs(['prod', 'api', 'DATABASE_URL'])).toThrow(
+    expect(() => parseSetArgs(CTX, ['prod', 'api', 'DATABASE_URL'])).toThrow(
       /Unknown environment "prod".*local, staging, production.*all/s,
     );
   });
 
   it('names the valid scopes when given an unknown one', () => {
-    expect(() => parseSetArgs(['staging', 'backend', 'DATABASE_URL'])).toThrow(
-      /Unknown scope "backend"/,
-    );
+    expect(() =>
+      parseSetArgs(CTX, ['staging', 'backend', 'DATABASE_URL']),
+    ).toThrow(/Unknown scope "backend"/);
   });
 
   // Guessing here writes a real secret to an environment nobody named.
   it('refuses a missing or extra argument, and shows the usage', () => {
-    expect(() => parseSetArgs(['staging', 'api'])).toThrow(
+    expect(() => parseSetArgs(CTX, ['staging', 'api'])).toThrow(
       /Expected exactly 3/,
     );
-    expect(() => parseSetArgs(['staging', 'api', 'A', 'B'])).toThrow(
+    expect(() => parseSetArgs(CTX, ['staging', 'api', 'A', 'B'])).toThrow(
       /Expected exactly 3/,
     );
-    expect(() => parseSetArgs([])).toThrow(/stdin/);
+    expect(() => parseSetArgs(CTX, [])).toThrow(/stdin/);
   });
 });
 
 describe('assertWritable', () => {
   it('accepts a key the registry declares for that scope', () => {
     expect(() =>
-      assertWritable(
-        { scope: 'api', key: 'DATABASE_URL' },
-        { registry: REGISTRY },
-      ),
+      assertWritable(CTX, { scope: 'api', key: 'DATABASE_URL' }),
     ).not.toThrow();
   });
 
-  // The accident scopes.mjs exists to prevent, and a one-liner makes it easier
+  // The accident the registry exists to prevent, and a one-liner makes it easier
   // than the sops CLI does.
   it('refuses a key declared for another scope, and says which', () => {
     expect(() =>
-      assertWritable(
-        { scope: 'web', key: 'DATABASE_URL' },
-        { registry: REGISTRY },
-      ),
+      assertWritable(CTX, { scope: 'web', key: 'DATABASE_URL' }),
     ).toThrow(/declared for "api"/);
   });
 
   it('names the file to edit and says nothing was written', () => {
     expect(() =>
-      assertWritable(
-        { scope: 'web', key: 'DATABASE_URL' },
-        { registry: REGISTRY },
-      ),
-    ).toThrow(/tools\/secrets\/scopes\.mjs[\s\S]*Nothing was written/);
+      assertWritable(CTX, { scope: 'web', key: 'DATABASE_URL' }),
+    ).toThrow(/secrets\.config\.mjs[\s\S]*Nothing was written/);
   });
 
   it('says so plainly when a key is declared nowhere', () => {
     expect(() =>
-      assertWritable({ scope: 'api', key: 'INVENTED' }, { registry: REGISTRY }),
+      assertWritable(CTX, { scope: 'api', key: 'INVENTED' }),
     ).toThrow(/declared for no scope at all/);
   });
 
   it('refuses a name that is not an environment variable', () => {
     expect(() =>
-      assertWritable(
-        { scope: 'api', key: 'database_url' },
-        { registry: REGISTRY },
-      ),
+      assertWritable(CTX, { scope: 'api', key: 'database_url' }),
     ).toThrow(/UPPER_SNAKE_CASE/);
   });
 
   it('refuses an unknown scope', () => {
     expect(() =>
-      assertWritable(
-        { scope: 'nope', key: 'DATABASE_URL' },
-        { registry: REGISTRY },
-      ),
+      assertWritable(CTX, { scope: 'nope', key: 'DATABASE_URL' }),
     ).toThrow(/Unknown scope/);
-  });
-
-  it('defaults to the real registry', () => {
-    expect(() =>
-      assertWritable({ scope: 'api', key: 'DATABASE_URL' }),
-    ).not.toThrow();
-    expect(SCOPE_KEYS.api).toContain('DATABASE_URL');
   });
 });
 

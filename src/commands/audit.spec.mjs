@@ -79,7 +79,7 @@ describe('placeholderFindings', () => {
       ]);
 
       expect(finding.severity).toBe('error');
-      expect(finding.message).toMatch(/STAGING-PROD-CHECKLIST/);
+      expect(finding.message).toMatch(/Replace it before/);
     }
   });
 });

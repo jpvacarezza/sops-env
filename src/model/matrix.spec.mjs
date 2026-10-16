@@ -2,11 +2,10 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { readDeclarations } from '../commands/list.mjs';
+import { fixtureCtx, registryCtx } from '../../test/helpers/ctx.mjs';
 import { buildMatrix, receivingApps } from './matrix.mjs';
 import { readEnvironment } from '../store/inventory.mjs';
 import { secretsFilePath } from '../store/paths.mjs';
-import { DEPLOYABLE_APPS, ENVIRONMENTS, SCOPE_KEYS } from '../scopes.mjs';
 
 const REGISTRY = {
   shared: [],
@@ -14,6 +13,7 @@ const REGISTRY = {
   web: [],
   admin: [],
 };
+const CTX = registryCtx(REGISTRY);
 
 const DECLARATIONS = {
   api: {
@@ -38,9 +38,8 @@ const inventory = (scopes, { encrypted = true } = {}) =>
     ]),
   );
 
-const build = (inventories, extra = {}) =>
-  buildMatrix({
-    registry: REGISTRY,
+const build = (inventories, extra = {}, ctx = CTX) =>
+  buildMatrix(ctx, {
     environments: ['local', 'staging'],
     inventories,
     declarations: DECLARATIONS,
@@ -54,11 +53,11 @@ const row = (matrix, scope, key) =>
 
 describe('receivingApps', () => {
   it('maps an app scope to that app', () => {
-    expect(receivingApps('api')).toEqual(['api']);
+    expect(receivingApps(CTX, 'api')).toEqual(['api']);
   });
 
   it('maps `shared` to every app, because it merges into all of them', () => {
-    expect(receivingApps('shared')).toEqual(['api', 'web', 'admin', 'ingest']);
+    expect(receivingApps(CTX, 'shared')).toEqual(['api', 'web', 'admin']);
   });
 });
 
@@ -190,7 +189,10 @@ describe('buildMatrix findings', () => {
   it('suppresses that warning for an exempted key', () => {
     const matrix = build(
       { local: {}, staging: {} },
-      { exemptions: { A_OPT: 'read at point of use' } },
+      {},
+      registryCtx(REGISTRY, {
+        extra: { exemptions: { derived: { A_OPT: 'read at point of use' } } },
+      }),
     );
 
     expect(
@@ -218,9 +220,20 @@ describe('buildMatrix findings', () => {
   });
 });
 
+it('carries the key note on each row', () => {
+  const ctx = fixtureCtx();
+  const matrix = buildMatrix(ctx, { environments: ['local'], inventories: {} });
+  const noted = matrix.rows.find(
+    (r) => r.scope === 'api' && r.key === 'INTERNAL_API_KEY_WEB',
+  );
+
+  expect(noted.note).toMatch(/web\.INTERNAL_API_KEY/);
+  expect(matrix.rows.find((r) => r.key === 'DATABASE_URL').note).toBeNull();
+});
+
 // `ingest` is the real example: an app scope with no Railway service until
 // slice 1b, so `DEPLOYABLE_APPS` excludes it while `APPS` still includes it
-// (`scopes.mjs`). Before the fix, a required key with no default — exactly
+// (the config). Before the fix, a required key with no default — exactly
 // what `ingest.VENDORS_DATABASE_URL` and `ingest.PRODUCT_DATABASE_URL` are —
 // produced a `missing-required` error for `staging` and `production` too,
 // even though the scope has no platform to be missing FROM there.
@@ -237,10 +250,13 @@ describe('buildMatrix and scopes outside DEPLOYABLE_APPS', () => {
     },
   };
 
+  const INGEST_CTX = registryCtx(REGISTRY_WITH_INGEST, {
+    nonDeployable: ['ingest'],
+  });
+
   const buildAllEnvironments = (inventories) =>
-    buildMatrix({
-      registry: REGISTRY_WITH_INGEST,
-      environments: ENVIRONMENTS,
+    buildMatrix(INGEST_CTX, {
+      environments: INGEST_CTX.environments,
       inventories,
       declarations: DECLARATIONS_WITH_INGEST,
     });
@@ -251,7 +267,7 @@ describe('buildMatrix and scopes outside DEPLOYABLE_APPS', () => {
     );
 
   it('confirms the fixture scope is outside DEPLOYABLE_APPS', () => {
-    expect(DEPLOYABLE_APPS).not.toContain('ingest');
+    expect(INGEST_CTX.deployableApps).not.toContain('ingest');
   });
 
   it('flags a missing required key in local only, not in staging or production', () => {
@@ -314,23 +330,24 @@ describe('buildMatrix and scopes outside DEPLOYABLE_APPS', () => {
 // Against the real registry, files and schemas. Deliberately not asserting a
 // specific finding: the store is meant to change, and a test pinned to today's
 // drift would fail the moment someone fixes it.
-describe('the real repository', () => {
+describe('the fixture repository', () => {
+  const ctx = fixtureCtx();
   const inventories = Object.fromEntries(
-    ENVIRONMENTS.map((environment) => [
+    ctx.environments.map((environment) => [
       environment,
-      readEnvironment(secretsFilePath(environment), { readFile: readFileSync })
-        .inventory,
+      readEnvironment(ctx, secretsFilePath(ctx, environment), {
+        readFile: readFileSync,
+      }).inventory,
     ]),
   );
-  const matrix = buildMatrix({
-    registry: SCOPE_KEYS,
-    environments: ENVIRONMENTS,
+  const matrix = buildMatrix(ctx, {
+    environments: ctx.environments,
     inventories,
-    declarations: readDeclarations(),
+    declarations: {},
   });
 
   it('has a row for every declared key', () => {
-    const declared = Object.entries(SCOPE_KEYS).flatMap(([scope, keys]) =>
+    const declared = Object.entries(ctx.registry).flatMap(([scope, keys]) =>
       keys.map((key) => `${scope}.${key}`),
     );
     const rows = matrix.rows.map((entry) => `${entry.scope}.${entry.key}`);

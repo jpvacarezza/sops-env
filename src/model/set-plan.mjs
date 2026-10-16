@@ -1,20 +1,21 @@
 /**
- * Argument parsing and sops argv for `secrets:set` / `secrets:unset`.
+ * Argument parsing and sops argv for `sops-env set` and `sops-env unset`.
  *
  * Pure, and separated from the writing for the same reason `sync-plan.mjs` is
  * separated from `sync.mjs`: every refusal in here has to be provable without a
  * key, a binary, or a file on disk, because a refusal that only works when sops
  * happens to be installed is not a control.
  */
-import { ENVIRONMENTS, SCOPE_KEYS, SCOPES } from '../scopes.mjs';
 
-export const SET_USAGE = `Usage: <value on stdin> | pnpm secrets:set <environment|all> <scope> <KEY>
-       pnpm secrets                          (the grid; needs a terminal)
+export const setUsage = (
+  ctx,
+) => `Usage: <value on stdin> | sops-env set <environment|all> <scope> <KEY>
+       sops-env                              (the grid; needs a terminal)
 
-  environment   ${ENVIRONMENTS.join(' | ')} | all
-  scope         ${SCOPES.join(' | ')}
-  KEY           must already be declared for that scope in tools/secrets/scopes.mjs
-  --sync        after writing, dry-run \`secrets:sync\` for the app that scope
+  environment   ${ctx.environments.join(' | ')} | all
+  scope         ${ctx.scopes.join(' | ')}
+  KEY           must already be declared for that scope in secrets.config.mjs
+  --sync        after writing, dry-run \`sops-env sync\` for the app that scope
                 feeds, then offer the real sync. Needs a terminal to confirm at;
                 without one it stops after the dry run.
 
@@ -22,20 +23,22 @@ The value is read from stdin and never taken as an argument: on Windows any
 process running as you can read another process's command line, and argv lands
 in your shell history either way.
 
-  printf '%s' "$NEW" | pnpm secrets:set staging api BETTER_AUTH_URL_ADMIN
-  pnpm secrets:unset local api VENDOR_DATA_DIR`;
+  printf '%s' "$NEW" | sops-env set staging api BETTER_AUTH_URL_ADMIN
+  sops-env unset local api VENDOR_DATA_DIR`;
 
-export const UNSET_USAGE = `Usage: pnpm secrets:unset <environment|all> <scope> <KEY>
+export const unsetUsage = (
+  ctx,
+) => `Usage: sops-env unset <environment|all> <scope> <KEY>
 
-  environment   ${ENVIRONMENTS.join(' | ')} | all
-  scope         ${SCOPES.join(' | ')}
-  KEY           must already be declared for that scope in tools/secrets/scopes.mjs
+  environment   ${ctx.environments.join(' | ')} | all
+  scope         ${ctx.scopes.join(' | ')}
+  KEY           must already be declared for that scope in secrets.config.mjs
 
 Takes no value and reads no stdin. \`--sync\` is refused here: the platform
 providers only ever upsert, so a sync cannot delete anything and would report
 success while the old value stayed live.
 
-  pnpm secrets:unset local api VENDOR_DATA_DIR`;
+  sops-env unset local api VENDOR_DATA_DIR`;
 
 /**
  * Positional only, and `all` has to be spelled out.
@@ -43,7 +46,7 @@ success while the old value stayed live.
  * `args.mjs` takes the same line on the `--` before a command: guessing wrong
  * here writes a real secret to an environment nobody named.
  */
-export function parseSetArgs(argv, { usage = SET_USAGE } = {}) {
+export function parseSetArgs(ctx, argv, { usage = setUsage(ctx) } = {}) {
   const positional = argv.filter((arg) => !arg.startsWith('--'));
 
   if (positional.length !== 3) {
@@ -54,20 +57,20 @@ export function parseSetArgs(argv, { usage = SET_USAGE } = {}) {
 
   const [target, scope, key] = positional;
 
-  if (target !== 'all' && !ENVIRONMENTS.includes(target)) {
+  if (target !== 'all' && !ctx.environments.includes(target)) {
     throw new Error(
-      `Unknown environment "${target}". Expected one of: ${ENVIRONMENTS.join(', ')}, or "all".`,
+      `Unknown environment "${target}". Expected one of: ${ctx.environments.join(', ')}, or "all".`,
     );
   }
 
-  if (!SCOPES.includes(scope)) {
+  if (!ctx.scopes.includes(scope)) {
     throw new Error(
-      `Unknown scope "${scope}". Expected one of: ${SCOPES.join(', ')}.`,
+      `Unknown scope "${scope}". Expected one of: ${ctx.scopes.join(', ')}.`,
     );
   }
 
   return {
-    environments: target === 'all' ? [...ENVIRONMENTS] : [target],
+    environments: target === 'all' ? [...ctx.environments] : [target],
     scope,
     key,
   };
@@ -76,16 +79,16 @@ export function parseSetArgs(argv, { usage = SET_USAGE } = {}) {
 /**
  * Refuse a key the registry does not declare for that scope, before any I/O.
  *
- * `scopes.mjs` calls itself the one security control in the projection path, and
+ * The registry in `secrets.config.mjs` is the one security control in the projection path, and
  * a menu or a shell one-liner makes filing `DATABASE_URL` under `web:` *easier*
  * than the sops CLI does. This tool does not edit that file: the entry it wants
  * carries a comment explaining which audience the variable belongs to, and that
  * sentence is the reason the control works.
  */
-export function assertWritable({ scope, key }, { registry = SCOPE_KEYS } = {}) {
-  if (!SCOPES.includes(scope)) {
+export function assertWritable(ctx, { scope, key }) {
+  if (!ctx.scopes.includes(scope)) {
     throw new Error(
-      `Unknown scope "${scope}". Expected one of: ${SCOPES.join(', ')}.`,
+      `Unknown scope "${scope}". Expected one of: ${ctx.scopes.join(', ')}.`,
     );
   }
 
@@ -96,10 +99,10 @@ export function assertWritable({ scope, key }, { registry = SCOPE_KEYS } = {}) {
     );
   }
 
-  if ((registry[scope] ?? []).includes(key)) return;
+  if ((ctx.registry[scope] ?? []).includes(key)) return;
 
-  const elsewhere = SCOPES.filter((candidate) =>
-    (registry[candidate] ?? []).includes(key),
+  const elsewhere = ctx.scopes.filter((candidate) =>
+    (ctx.registry[candidate] ?? []).includes(key),
   );
 
   const hint =
@@ -111,9 +114,9 @@ export function assertWritable({ scope, key }, { registry = SCOPE_KEYS } = {}) {
 
   throw new Error(
     `"${key}" is not declared for scope "${scope}". ${hint}\n` +
-      'If it really belongs here, add it to SCOPE_KEYS.' +
-      `${scope} in tools/secrets/scopes.mjs — with a comment saying why that ` +
-      'audience — and run this again. Nothing was written.',
+      `If it really belongs here, add it under scopes.${scope}.keys in ` +
+      'secrets.config.mjs — with a note saying why that audience — and run ' +
+      'this again. Nothing was written.',
   );
 }
 

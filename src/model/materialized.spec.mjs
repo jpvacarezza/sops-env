@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
+import { registryCtx } from '../../test/helpers/ctx.mjs';
 import { materializedFindings, storeKeysForApp } from './materialized.mjs';
+
+const CTX = registryCtx({ shared: [], api: [], admin: [] });
 
 /** Shape `inventory.mjs` produces: scope → keys → { line, encrypted }. */
 const inventory = (scopes) =>
@@ -37,11 +40,10 @@ const DECLARATIONS = {
 const onDisk = (text) => ({
   exists: () => text !== null,
   readFile: () => text,
-  envFilePath: (app) => `apps/${app}/.env.local`,
 });
 
 const findingsFor = (text, { environment = 'local' } = {}) =>
-  materializedFindings({
+  materializedFindings(CTX, {
     environment,
     inventory: API_STORE,
     declarations: DECLARATIONS,
@@ -52,6 +54,7 @@ const findingsFor = (text, { environment = 'local' } = {}) =>
 describe('storeKeysForApp', () => {
   it('merges shared into an app scope, without duplicating', () => {
     const merged = storeKeysForApp(
+      CTX,
       'api',
       inventory({ shared: ['LOG_LEVEL'], api: ['DATABASE_URL', 'LOG_LEVEL'] }),
     );
@@ -60,7 +63,7 @@ describe('storeKeysForApp', () => {
   });
 
   it('is empty for an app the store says nothing about', () => {
-    expect(storeKeysForApp('admin', API_STORE)).toEqual([]);
+    expect(storeKeysForApp(CTX, 'admin', API_STORE)).toEqual([]);
   });
 });
 
@@ -86,7 +89,7 @@ describe('materializedFindings', () => {
       scope: 'api',
       key: 'BETTER_AUTH_URL_ADMIN',
     });
-    expect(findings[0].message).toContain('pnpm secrets:materialize local api');
+    expect(findings[0].message).toContain('sops-env materialize local api');
   });
 
   it('downgrades a key the schema does not require to a warning', () => {

@@ -5,7 +5,7 @@
  * it only ever writes. Nothing reads one back, so a variable added to the store
  * after a file was generated is invisible to every check there is:
  * `env-contract.spec.mjs` compares names across the registry, the schemas and
- * the `.env.example`s; `secrets:list` adds presence per environment. All of
+ * the `.env.example`s; `sops-env list` adds presence per environment. All of
  * those are questions about the store, and none of them is a question about
  * this disk.
  *
@@ -14,7 +14,7 @@
  * nine days earlier did not have it. `parseApiEnv` throws at import, so the API
  * never bound its port, the BFF proxy's fetch was refused, and the browser was
  * handed "Authentication service unavailable" by a route in another app that
- * knows nothing about environment variables. `secrets:list` reported zero
+ * knows nothing about environment variables. `sops-env list` reported zero
  * errors throughout, correctly: the store was fine.
  *
  * Reads key names only — never a value, and never the age key. SOPS leaves
@@ -25,22 +25,17 @@ import { existsSync, readFileSync } from 'node:fs';
 
 import { readExampleKeys } from './env-contract.mjs';
 import { appEnvFilePath } from '../store/paths.mjs';
-import { APP_SCOPES, APPS } from '../scopes.mjs';
 
 /**
  * Every key the store would project into one app, in scope-merge order.
  *
- * Reuses `APP_SCOPES` rather than reading the app's scope alone, because
- * `shared` merges into all three and a key typed there belongs on every disk.
+ * Reuses `ctx.appScopes` rather than reading the app's scope alone, because
+ * `shared` merges into every app and a key typed there belongs on every disk.
  */
-export function storeKeysForApp(
-  app,
-  inventory,
-  { appScopes = APP_SCOPES } = {},
-) {
+export function storeKeysForApp(ctx, app, inventory) {
   const keys = [];
 
-  for (const scope of appScopes[app] ?? []) {
+  for (const scope of ctx.appScopes[app] ?? []) {
     for (const key of Object.keys(inventory?.[scope]?.keys ?? {})) {
       if (!keys.includes(key)) keys.push(key);
     }
@@ -53,29 +48,31 @@ export function storeKeysForApp(
  * Findings for one environment's materialized files.
  *
  * Only `local` has any: staging and production reach their platform through
- * `secrets:sync`, so no file is expected on disk and its absence is the normal
+ * `sops-env sync`, so no file is expected on disk and its absence is the normal
  * state rather than drift. Saying otherwise would put two permanent errors in
  * front of every reader until they learned to ignore the whole section.
  */
-export function materializedFindings({
-  environment,
-  inventory,
-  declarations = {},
-  apps = APPS,
-  exists = existsSync,
-  readFile = readFileSync,
-  envFilePath = appEnvFilePath,
-}) {
+export function materializedFindings(
+  ctx,
+  {
+    environment,
+    inventory,
+    declarations = {},
+    apps = ctx.apps,
+    exists = existsSync,
+    readFile = readFileSync,
+  },
+) {
   if (environment !== 'local') return [];
 
   const findings = [];
 
   for (const app of apps) {
-    const expected = storeKeysForApp(app, inventory);
+    const expected = storeKeysForApp(ctx, app, inventory);
     if (expected.length === 0) continue;
 
-    const file = envFilePath(app);
-    const relative = `apps/${app}/.env.local`;
+    const file = appEnvFilePath(ctx, app);
+    const relative = ctx.app[app].dotenv;
 
     if (!exists(file)) {
       findings.push({
@@ -86,7 +83,7 @@ export function materializedFindings({
         environment,
         message:
           `${relative} does not exist and the store declares ${expected.length} ` +
-          `variable(s) for ${app}. Run \`pnpm secrets:materialize local ${app}\`.`,
+          `variable(s) for ${app}. Run \`sops-env materialize local ${app}\`.`,
       });
       continue;
     }
@@ -111,11 +108,11 @@ export function materializedFindings({
         message: required
           ? `${app}.${key} is in the store and missing from ${relative}, and the ` +
             `${app} schema requires it — the app will not boot. The file is ` +
-            'generated and predates the variable: `pnpm secrets:materialize ' +
+            'generated and predates the variable: `sops-env materialize ' +
             `local ${app}\`.`
           : `${app}.${key} is in the store and missing from ${relative}. The ` +
-            'file is generated and predates the variable: `pnpm ' +
-            `secrets:materialize local ${app}\`.`,
+            'file is generated and predates the variable: `sops-env ' +
+            `materialize local ${app}\`.`,
       });
     }
 
@@ -135,7 +132,7 @@ export function materializedFindings({
         message:
           `${app}.${key} is in ${relative} and the store no longer declares it. ` +
           'Either it was hand-edited or the registry dropped it after the file ' +
-          `was generated: \`pnpm secrets:materialize local ${app}\`.`,
+          `was generated: \`sops-env materialize local ${app}\`.`,
       });
     }
   }

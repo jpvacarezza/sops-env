@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
+import { registryCtx } from '../../test/helpers/ctx.mjs';
 import { parseSyncArgs, planSync, vercelVarType } from '../model/sync-plan.mjs';
 import { upsertVercelEnv } from '../providers/vercel.mjs';
 import { upsertRailwayVariables } from '../providers/railway.mjs';
 
+const CTX = registryCtx(
+  { shared: [], api: [], web: [], admin: [], ingest: [] },
+  { nonDeployable: ['ingest'] },
+);
+
 describe('parseSyncArgs', () => {
   it('defaults the app list to all deployables', () => {
-    expect(parseSyncArgs(['staging'])).toEqual({
+    expect(parseSyncArgs(CTX, ['staging'])).toEqual({
       environment: 'staging',
       apps: ['api', 'web', 'admin'],
       dryRun: false,
@@ -13,7 +19,7 @@ describe('parseSyncArgs', () => {
   });
 
   it('accepts a single app and --dry-run anywhere', () => {
-    expect(parseSyncArgs(['--dry-run', 'production', 'web'])).toEqual({
+    expect(parseSyncArgs(CTX, ['--dry-run', 'production', 'web'])).toEqual({
       environment: 'production',
       apps: ['web'],
       dryRun: true,
@@ -21,22 +27,24 @@ describe('parseSyncArgs', () => {
   });
 
   it('rejects syncing local — that environment never leaves the laptop', () => {
-    expect(() => parseSyncArgs(['local', 'api'])).toThrow(/local/i);
+    expect(() => parseSyncArgs(CTX, ['local', 'api'])).toThrow(/local/i);
   });
 
   it('rejects an unknown app', () => {
-    expect(() => parseSyncArgs(['staging', 'storybook'])).toThrow(/storybook/);
+    expect(() => parseSyncArgs(CTX, ['staging', 'storybook'])).toThrow(
+      /storybook/,
+    );
   });
 });
 
 describe('vercelVarType', () => {
   it('marks NEXT_PUBLIC_* as plain so the client bundle can read them', () => {
-    expect(vercelVarType('NEXT_PUBLIC_SITE_URL')).toBe('plain');
+    expect(vercelVarType(CTX, 'NEXT_PUBLIC_SITE_URL')).toBe('plain');
   });
 
   it('marks everything else as sensitive', () => {
-    expect(vercelVarType('TRIPGENCY_INTERNAL_API_KEY')).toBe('sensitive');
-    expect(vercelVarType('TRIPGENCY_API_URL')).toBe('sensitive');
+    expect(vercelVarType(CTX, 'INTERNAL_API_KEY')).toBe('sensitive');
+    expect(vercelVarType(CTX, 'API_URL')).toBe('sensitive');
   });
 });
 
@@ -51,23 +59,30 @@ describe('planSync', () => {
       SECURITY_EVENT_IP_SALT: 't'.repeat(32),
       TRUST_PROXY: '1',
       SWAGGER_ENABLED: 'false',
-      TRIPGENCY_INTERNAL_API_KEY_WEB: 'w'.repeat(32),
-      TRIPGENCY_INTERNAL_API_KEY_ADMIN: 'a'.repeat(32),
+      INTERNAL_API_KEY_WEB: 'w'.repeat(32),
+      INTERNAL_API_KEY_ADMIN: 'a'.repeat(32),
     },
     web: {
-      TRIPGENCY_API_URL: 'https://api.example.test',
-      TRIPGENCY_INTERNAL_API_KEY: 'w'.repeat(32),
+      API_URL: 'https://api.example.test',
+      INTERNAL_API_KEY: 'w'.repeat(32),
       ENABLED_COUNTRIES: 'AR,CO',
       NEXT_PUBLIC_SITE_URL: 'https://example.test',
     },
     admin: {
-      TRIPGENCY_API_URL: 'https://api.example.test',
-      TRIPGENCY_INTERNAL_API_KEY: 'a'.repeat(32),
+      API_URL: 'https://api.example.test',
+      INTERNAL_API_KEY: 'a'.repeat(32),
     },
   };
 
+  const PLAN_CTX = registryCtx({
+    shared: [],
+    api: Object.keys(doc.api),
+    web: Object.keys(doc.web),
+    admin: Object.keys(doc.admin),
+  });
+
   it('routes api to Railway and web/admin to Vercel, listing key names only', () => {
-    const plan = planSync(doc, {
+    const plan = planSync(PLAN_CTX, doc, {
       environment: 'staging',
       apps: ['api', 'web', 'admin'],
     });
@@ -78,12 +93,12 @@ describe('planSync', () => {
       'vercel/admin',
     ]);
     expect(plan[0].keys).toContain('DATABASE_URL');
-    expect(plan[0].keys).toContain('TRIPGENCY_INTERNAL_API_KEY_WEB');
-    expect(plan[0].keys).toContain('TRIPGENCY_INTERNAL_API_KEY_ADMIN');
-    expect(plan[0].keys).not.toContain('TRIPGENCY_INTERNAL_API_KEY');
-    expect(plan[1].keys).toContain('TRIPGENCY_INTERNAL_API_KEY');
-    expect(plan[1].keys).not.toContain('TRIPGENCY_INTERNAL_API_KEY_WEB');
-    expect(plan[2].keys).toContain('TRIPGENCY_INTERNAL_API_KEY');
+    expect(plan[0].keys).toContain('INTERNAL_API_KEY_WEB');
+    expect(plan[0].keys).toContain('INTERNAL_API_KEY_ADMIN');
+    expect(plan[0].keys).not.toContain('INTERNAL_API_KEY');
+    expect(plan[1].keys).toContain('INTERNAL_API_KEY');
+    expect(plan[1].keys).not.toContain('INTERNAL_API_KEY_WEB');
+    expect(plan[2].keys).toContain('INTERNAL_API_KEY');
     expect(plan[1].keys).toContain('NEXT_PUBLIC_SITE_URL');
     expect(plan[1].keys).not.toContain('DATABASE_URL');
     // The plan never carries values — logging a plan must be safe.
@@ -94,7 +109,10 @@ describe('planSync', () => {
   });
 
   it('still exposes the projected env only through a private getter for the applicator', () => {
-    const plan = planSync(doc, { environment: 'production', apps: ['web'] });
+    const plan = planSync(PLAN_CTX, doc, {
+      environment: 'production',
+      apps: ['web'],
+    });
     expect(plan[0].getEnv().NEXT_PUBLIC_SITE_URL).toBe('https://example.test');
   });
 });
@@ -113,8 +131,9 @@ describe('upsertVercelEnv', () => {
         teamId: 'team_1',
         projectId: 'prj_web',
         targets: ['preview'],
+        ctx: CTX,
         env: {
-          TRIPGENCY_API_URL: 'https://api.test',
+          API_URL: 'https://api.test',
           NEXT_PUBLIC_SITE_URL: 'https://web.test',
         },
       },
@@ -135,7 +154,7 @@ describe('upsertVercelEnv', () => {
           target: ['preview'],
         }),
         expect.objectContaining({
-          key: 'TRIPGENCY_API_URL',
+          key: 'API_URL',
           type: 'sensitive',
           target: ['preview'],
         }),
@@ -144,7 +163,7 @@ describe('upsertVercelEnv', () => {
     expect(summary).toEqual({
       destination: 'vercel',
       projectId: 'prj_web',
-      keys: ['NEXT_PUBLIC_SITE_URL', 'TRIPGENCY_API_URL'],
+      keys: ['API_URL', 'NEXT_PUBLIC_SITE_URL'],
     });
   });
 
@@ -161,6 +180,7 @@ describe('upsertVercelEnv', () => {
           token: 'tok',
           projectId: 'prj',
           targets: ['production'],
+          ctx: CTX,
           env: { A: '1' },
         },
         { fetchImpl },

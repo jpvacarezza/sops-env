@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { secretsFilePath } from '../store/paths.mjs';
+import { fixtureCtx, registryCtx } from '../../test/helpers/ctx.mjs';
+import { appEnvFilePath, secretsFilePath } from '../store/paths.mjs';
 import { decryptSecretsFile } from '../store/decrypt.mjs';
 import { formatEnvFile } from '../store/envfile.mjs';
 import { parseRunArgs } from './args.mjs';
@@ -18,20 +19,37 @@ import { parseRunArgs } from './args.mjs';
  */
 const posix = (value) => value.replaceAll('\\', '/');
 
+const ctx = registryCtx({ shared: [], api: [] });
+
 describe('secretsFilePath', () => {
-  it('maps an environment name onto its ciphertext file', () => {
-    expect(posix(secretsFilePath('local', { root: '/repo' }))).toBe(
+  it('maps an environment onto its ciphertext file under root', () => {
+    expect(posix(secretsFilePath(ctx, 'local'))).toBe(
       '/repo/secrets/local.enc.yaml',
     );
-    expect(posix(secretsFilePath('production', { root: '/repo' }))).toBe(
+    expect(posix(secretsFilePath(ctx, 'production'))).toBe(
       '/repo/secrets/production.enc.yaml',
     );
   });
 
+  it('honours store.dir and store.file', () => {
+    const custom = fixtureCtx({
+      store: { dir: 'vault', file: 'env-<environment>.yaml' },
+    });
+    expect(posix(custom.relative(secretsFilePath(custom, 'local')))).toBe(
+      'vault/env-local.yaml',
+    );
+  });
+
   it('rejects an environment that has no file, listing the ones that do', () => {
-    expect(() => secretsFilePath('prod', { root: '/repo' })).toThrow(
+    expect(() => secretsFilePath(ctx, 'prod')).toThrow(
       /local, staging, production/,
     );
+  });
+});
+
+describe('appEnvFilePath', () => {
+  it('reads the dotenv path from the app config', () => {
+    expect(posix(appEnvFilePath(ctx, 'api'))).toBe('/repo/apps/api/.env.local');
   });
 });
 
