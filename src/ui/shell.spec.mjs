@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { MARKS } from '../commands/list.mjs';
 import { buildMatrix } from '../model/matrix.mjs';
+import { registryCtx } from '../../test/helpers/ctx.mjs';
 import {
   buildRows,
   CELL_ACTIONS,
@@ -37,6 +38,11 @@ import {
 } from './shell.mjs';
 
 const ENVS = ['local', 'staging'];
+const DESTINATIONS = {
+  api: 'railway/api',
+  web: 'vercel/web',
+  admin: 'vercel/admin',
+};
 const ENVIRONMENTS_THREE = ['local', 'staging', 'production'];
 
 const REGISTRY = {
@@ -67,8 +73,7 @@ const cell = (keys) => ({
  * A_OPT is optional and set nowhere           → one warning.
  * A_DEF and W_REQ are clean.
  */
-const MATRIX = buildMatrix({
-  registry: REGISTRY,
+const MATRIX = buildMatrix(registryCtx(REGISTRY), {
   environments: ENVS,
   inventories: {
     local: { api: cell(['A_REQ', 'A_DEF']), web: cell(['W_REQ']) },
@@ -78,7 +83,11 @@ const MATRIX = buildMatrix({
 });
 
 const start = (overrides = {}) => ({
-  ...initialState({ matrix: MATRIX, environments: ENVS }),
+  ...initialState({
+    matrix: MATRIX,
+    environments: ENVS,
+    destinations: DESTINATIONS,
+  }),
   ...overrides,
 });
 
@@ -91,13 +100,13 @@ const start = (overrides = {}) => ({
  * the cap itself has its own test.
  */
 const FILLER = Array.from({ length: 14 }, (_, index) => `A_FILL_${index}`);
-const TALL = buildMatrix({
-  registry: {
-    shared: [],
-    api: ['A_REQ', 'A_DEF', 'A_OPT', ...FILLER],
-    web: ['W_REQ'],
-    admin: [],
-  },
+const TALL_REGISTRY = {
+  shared: [],
+  api: ['A_REQ', 'A_DEF', 'A_OPT', ...FILLER],
+  web: ['W_REQ'],
+  admin: [],
+};
+const TALL = buildMatrix(registryCtx(TALL_REGISTRY), {
   environments: ENVS,
   inventories: {
     local: { api: cell(['A_REQ', 'A_DEF', ...FILLER]), web: cell(['W_REQ']) },
@@ -106,7 +115,11 @@ const TALL = buildMatrix({
   declarations: DECLARATIONS,
 });
 const tall = (overrides = {}) => ({
-  ...initialState({ matrix: TALL, environments: ENVS }),
+  ...initialState({
+    matrix: TALL,
+    environments: ENVS,
+    destinations: DESTINATIONS,
+  }),
   ...overrides,
 });
 
@@ -168,19 +181,25 @@ describe('initialState', () => {
   });
 
   it('starts on the first row when nothing is flagged', () => {
-    const clean = buildMatrix({
-      registry: { shared: [], api: ['A_DEF'], web: [], admin: [] },
-      environments: ENVS,
-      inventories: {
-        local: { api: cell(['A_DEF']) },
-        staging: { api: cell(['A_DEF']) },
+    const clean = buildMatrix(
+      registryCtx({ shared: [], api: ['A_DEF'], web: [], admin: [] }),
+      {
+        environments: ENVS,
+        inventories: {
+          local: { api: cell(['A_DEF']) },
+          staging: { api: cell(['A_DEF']) },
+        },
+        declarations: DECLARATIONS,
       },
-      declarations: DECLARATIONS,
-    });
-
-    expect(initialState({ matrix: clean, environments: ENVS }).selected).toBe(
-      'api.A_DEF',
     );
+
+    expect(
+      initialState({
+        matrix: clean,
+        environments: ENVS,
+        destinations: DESTINATIONS,
+      }).selected,
+    ).toBe('api.A_DEF');
   });
 
   it('opens with the detail closed and nothing revealed', () => {
@@ -298,17 +317,23 @@ describe('the errors filter', () => {
   });
 
   it('does not apply a filter that would leave nothing to select', () => {
-    const clean = buildMatrix({
-      registry: { shared: [], api: ['A_DEF'], web: [], admin: [] },
-      environments: ENVS,
-      inventories: {
-        local: { api: cell(['A_DEF']) },
-        staging: { api: cell(['A_DEF']) },
+    const clean = buildMatrix(
+      registryCtx({ shared: [], api: ['A_DEF'], web: [], admin: [] }),
+      {
+        environments: ENVS,
+        inventories: {
+          local: { api: cell(['A_DEF']) },
+          staging: { api: cell(['A_DEF']) },
+        },
+        declarations: DECLARATIONS,
       },
-      declarations: DECLARATIONS,
-    });
+    );
     const state = {
-      ...initialState({ matrix: clean, environments: ENVS }),
+      ...initialState({
+        matrix: clean,
+        environments: ENVS,
+        destinations: DESTINATIONS,
+      }),
       filter: 'errors',
     };
 
@@ -574,7 +599,7 @@ describe('the other keys', () => {
     expect(chars(start(), 's').effect).toEqual({ kind: 'sync' });
   });
 
-  // Retired from the console. `pnpm secrets:audit` is still the audit, and still
+  // Retired from the console. `sops-env audit` is still the audit, and still
   // what CI runs.
   it('no longer binds a for the audit', () => {
     expect(chars(start(), 'a').effect).toBeNull();
@@ -618,7 +643,7 @@ describe('columnWidths', () => {
   it('is the longest name plus two spaces, and the longest schema plus one', () => {
     const widths = columnWidths([
       {
-        key: 'TRIPGENCY_INTERNAL_API_KEY_ADMIN',
+        key: 'ACME_CORP_INTERNAL_API_KEY_ADMIN',
         schema: { presence: 'required' },
       },
       {
@@ -628,7 +653,7 @@ describe('columnWidths', () => {
     ]);
 
     expect(widths.name).toBe(
-      'TRIPGENCY_INTERNAL_API_KEY_ADMIN'.length + COLUMN_GAP,
+      'ACME_CORP_INTERNAL_API_KEY_ADMIN'.length + COLUMN_GAP,
     );
     expect(widths.schema).toBe("def('6003')".length + SCHEMA_GAP);
     expect(widths.reason).toBe(REASON_WIDTH);
@@ -667,7 +692,7 @@ describe('layout', () => {
   it('sizes a long key plus two spaces, even on a wide terminal', () => {
     const widths = columnWidths([
       {
-        key: 'TRIPGENCY_INTERNAL_API_KEY_ADMIN',
+        key: 'ACME_CORP_INTERNAL_API_KEY_ADMIN',
         schema: { presence: 'required' },
       },
     ]);
@@ -766,7 +791,7 @@ describe('split', () => {
   it('grows Variable and Schema with the rows, not the terminal', () => {
     const widths = columnWidths([
       {
-        key: 'TRIPGENCY_INTERNAL_API_KEY_ADMIN',
+        key: 'ACME_CORP_INTERNAL_API_KEY_ADMIN',
         schema: { presence: 'required' },
       },
     ]);
@@ -789,6 +814,28 @@ describe('the pane at the side', () => {
   const opened = () => tall();
   const drawn = (state, options) =>
     renderShell(state, { ...wide, ...options }).join('\n');
+
+  it('shows the key note under the facts when the row has one', () => {
+    const noted = {
+      ...TALL,
+      rows: TALL.rows.map((row) =>
+        row.key === 'A_REQ'
+          ? { ...row, note: 'Issued by the vendor console.' }
+          : row,
+      ),
+    };
+    const state = {
+      ...initialState({
+        matrix: noted,
+        environments: ENVS,
+        destinations: DESTINATIONS,
+      }),
+      selected: 'api.A_REQ',
+    };
+    const lines = renderShell(state, { columns: 200 }).join('\n');
+
+    expect(lines).toContain('Issued by the vendor console.');
+  });
 
   // Open whenever it can be. Two conditions close it, and neither is a keystroke:
   // value mode, and a terminal with no room.
@@ -887,19 +934,25 @@ describe('the pane at the side', () => {
 
   // `c` exists to compare without showing, and the pane would have defeated it.
   it('swaps the value for the fingerprint in compare mode', () => {
-    const prints = buildMatrix({
-      registry: { shared: [], api: ['A_DEF'], web: [], admin: [] },
-      environments: ENVS,
-      inventories: {
-        local: { api: cell(['A_DEF']) },
-        staging: { api: cell(['A_DEF']) },
+    const prints = buildMatrix(
+      registryCtx({ shared: [], api: ['A_DEF'], web: [], admin: [] }),
+      {
+        environments: ENVS,
+        inventories: {
+          local: { api: cell(['A_DEF']) },
+          staging: { api: cell(['A_DEF']) },
+        },
+        declarations: DECLARATIONS,
+        fingerprints: { local: { api: { A_DEF: 'deadbeef' } } },
       },
-      declarations: DECLARATIONS,
-      fingerprints: { local: { api: { A_DEF: 'deadbeef' } } },
-    });
+    );
     const shown = renderShell(
       {
-        ...initialState({ matrix: prints, environments: ENVS }),
+        ...initialState({
+          matrix: prints,
+          environments: ENVS,
+          destinations: DESTINATIONS,
+        }),
         values: 'fingerprint',
       },
       { ...wide, cellValue: () => 'the-secret' },
@@ -958,7 +1011,7 @@ describe('the pane at the side', () => {
   });
 
   // The whole word, upper-cased, and `local` reads DEVELOPMENT. Display labels:
-  // the environment is still `local` in the filename and in `secrets:set`.
+  // the environment is still `local` in the filename and in `sops-env set`.
   it('labels the environment rows with the long names', () => {
     const withPane = renderShell(opened(), wide).join('\n');
 
@@ -1413,7 +1466,11 @@ describe('cellTone, through the pane', () => {
   const rows = buildRows(MATRIX);
   const toneOf = (row, environment) => {
     const state = {
-      ...initialState({ matrix: TALL, environments: ENVS }),
+      ...initialState({
+        matrix: TALL,
+        environments: ENVS,
+        destinations: DESTINATIONS,
+      }),
       rows: buildRows(TALL).map((candidate) =>
         rowId(candidate) === rowId(row) ? row : candidate,
       ),
@@ -1647,14 +1704,20 @@ describe('renderShell', () => {
   });
 
   it('says when a variable is not declared, because sync would refuse it', () => {
-    const undeclared = buildMatrix({
-      registry: { shared: [], api: [], web: [], admin: [] },
-      environments: ENVS,
-      inventories: { local: { api: cell(['SNEAKY']) }, staging: {} },
-      declarations: {},
-    });
+    const undeclared = buildMatrix(
+      registryCtx({ shared: [], api: [], web: [], admin: [] }),
+      {
+        environments: ENVS,
+        inventories: { local: { api: cell(['SNEAKY']) }, staging: {} },
+        declarations: {},
+      },
+    );
     const state = pressIn(
-      initialState({ matrix: undeclared, environments: ENVS }),
+      initialState({
+        matrix: undeclared,
+        environments: ENVS,
+        destinations: DESTINATIONS,
+      }),
       'enter',
       NARROW,
     ).state;
@@ -1681,8 +1744,7 @@ describe('renderShell', () => {
   });
 
   it('shows a fingerprint in the cell when the grid has one', () => {
-    const withPrints = buildMatrix({
-      registry: REGISTRY,
+    const withPrints = buildMatrix(registryCtx(REGISTRY), {
       environments: ENVS,
       inventories: {
         local: { api: cell(['A_REQ']) },
@@ -1692,7 +1754,11 @@ describe('renderShell', () => {
       fingerprints: { local: { api: { A_REQ: 'deadbeef' } } },
     });
     const state = {
-      ...initialState({ matrix: withPrints, environments: ENVS }),
+      ...initialState({
+        matrix: withPrints,
+        environments: ENVS,
+        destinations: DESTINATIONS,
+      }),
       values: 'fingerprint',
     };
 
@@ -1886,20 +1952,23 @@ describe('renderShell', () => {
   // window and `loca stag prod` in another. Four characters fit the narrowest cell
   // the layout can produce, so they are the same everywhere.
   it('heads the columns DEV, STG and PROD at every width', () => {
-    const three = buildMatrix({
-      registry: { shared: [], api: ['A_DEF'], web: [], admin: [] },
-      environments: ENVIRONMENTS_THREE,
-      inventories: Object.fromEntries(
-        ENVIRONMENTS_THREE.map((environment) => [
-          environment,
-          { api: cell(['A_DEF']) },
-        ]),
-      ),
-      declarations: DECLARATIONS,
-    });
+    const three = buildMatrix(
+      registryCtx({ shared: [], api: ['A_DEF'], web: [], admin: [] }),
+      {
+        environments: ENVIRONMENTS_THREE,
+        inventories: Object.fromEntries(
+          ENVIRONMENTS_THREE.map((environment) => [
+            environment,
+            { api: cell(['A_DEF']) },
+          ]),
+        ),
+        declarations: DECLARATIONS,
+      },
+    );
     const state = initialState({
       matrix: three,
       environments: ENVIRONMENTS_THREE,
+      destinations: DESTINATIONS,
     });
 
     for (const columns of [71, 80, 120, 240]) {
@@ -1928,14 +1997,20 @@ describe('renderShell', () => {
   });
 
   it('heads an unmapped environment with its own name rather than a blank', () => {
-    const odd = buildMatrix({
-      registry: { shared: [], api: ['A_DEF'], web: [], admin: [] },
-      environments: ['sandbox'],
-      inventories: { sandbox: { api: cell(['A_DEF']) } },
-      declarations: DECLARATIONS,
-    });
+    const odd = buildMatrix(
+      registryCtx({ shared: [], api: ['A_DEF'], web: [], admin: [] }),
+      {
+        environments: ['sandbox'],
+        inventories: { sandbox: { api: cell(['A_DEF']) } },
+        declarations: DECLARATIONS,
+      },
+    );
     const head = lines(
-      initialState({ matrix: odd, environments: ['sandbox'] }),
+      initialState({
+        matrix: odd,
+        environments: ['sandbox'],
+        destinations: DESTINATIONS,
+      }),
       {
         columns: 120,
       },
@@ -2011,20 +2086,23 @@ describe('renderShell', () => {
   });
 
   it('centres the PROD glyph on the third character', () => {
-    const three = buildMatrix({
-      registry: { shared: [], api: ['A_DEF'], web: [], admin: [] },
-      environments: ENVIRONMENTS_THREE,
-      inventories: Object.fromEntries(
-        ENVIRONMENTS_THREE.map((environment) => [
-          environment,
-          { api: cell(['A_DEF']) },
-        ]),
-      ),
-      declarations: DECLARATIONS,
-    });
+    const three = buildMatrix(
+      registryCtx({ shared: [], api: ['A_DEF'], web: [], admin: [] }),
+      {
+        environments: ENVIRONMENTS_THREE,
+        inventories: Object.fromEntries(
+          ENVIRONMENTS_THREE.map((environment) => [
+            environment,
+            { api: cell(['A_DEF']) },
+          ]),
+        ),
+        declarations: DECLARATIONS,
+      },
+    );
     const state = initialState({
       matrix: three,
       environments: ENVIRONMENTS_THREE,
+      destinations: DESTINATIONS,
     });
     const painted = lines(state, { colors: false });
     const row = painted.find((line) => line.includes('A_DEF'));
@@ -2042,18 +2120,24 @@ describe('renderShell', () => {
 
   // Two rules with one offset: a fingerprint sits under the glyph it belongs to.
   it('starts a fingerprint on the same column as a bare glyph', () => {
-    const prints = buildMatrix({
-      registry: { shared: [], api: ['A_DEF'], web: [], admin: [] },
-      environments: ENVS,
-      inventories: {
-        local: { api: cell(['A_DEF']) },
-        staging: { api: cell(['A_DEF']) },
+    const prints = buildMatrix(
+      registryCtx({ shared: [], api: ['A_DEF'], web: [], admin: [] }),
+      {
+        environments: ENVS,
+        inventories: {
+          local: { api: cell(['A_DEF']) },
+          staging: { api: cell(['A_DEF']) },
+        },
+        declarations: DECLARATIONS,
+        fingerprints: { local: { api: { A_DEF: 'deadbeef' } } },
       },
-      declarations: DECLARATIONS,
-      fingerprints: { local: { api: { A_DEF: 'deadbeef' } } },
-    });
+    );
     const state = {
-      ...initialState({ matrix: prints, environments: ENVS }),
+      ...initialState({
+        matrix: prints,
+        environments: ENVS,
+        destinations: DESTINATIONS,
+      }),
       values: 'fingerprint',
     };
     const row = lines(state, { columns: 140 }).find((line) =>
@@ -2119,22 +2203,31 @@ describe('renderShell', () => {
   });
 
   it('keeps a long variable name whole in the cell menu', () => {
-    const key = 'TRIPGENCY_INTERNAL_API_KEY_ADMIN';
-    const matrix = buildMatrix({
-      registry: { shared: [], api: [key], web: [], admin: [] },
-      environments: ENVS,
-      inventories: {
-        local: { api: cell([key]) },
-        staging: { api: cell([key]) },
+    const key = 'ACME_CORP_INTERNAL_API_KEY_ADMIN';
+    const matrix = buildMatrix(
+      registryCtx({ shared: [], api: [key], web: [], admin: [] }),
+      {
+        environments: ENVS,
+        inventories: {
+          local: { api: cell([key]) },
+          staging: { api: cell([key]) },
+        },
+        declarations: {
+          api: { [key]: { presence: 'required', defaultLiteral: null } },
+          web: {},
+          admin: {},
+        },
       },
-      declarations: {
-        api: { [key]: { presence: 'required', defaultLiteral: null } },
-        web: {},
-        admin: {},
-      },
-    });
+    );
     const opened = press(
-      press(initialState({ matrix, environments: ENVS }), 'right').state,
+      press(
+        initialState({
+          matrix,
+          environments: ENVS,
+          destinations: DESTINATIONS,
+        }),
+        'right',
+      ).state,
       'enter',
     ).state;
     const joined = renderShell(opened, { columns: 80, colors: false }).join(

@@ -1,21 +1,20 @@
 /**
- * `pnpm secrets:audit` — the questions about *values*, and the one that fails.
+ * `sops-env audit` — the questions about *values*, and the one that fails.
  *
- * `env-contract.spec.mjs` compares four lists of variable *names* and is green
- * today. `secrets:list` adds presence per environment. Neither can answer:
+ * `env-contract.spec.mjs` compares lists of variable *names* and is green
+ * today. `sops-env list` adds presence per environment. Neither can answer:
  *
  *   - does each value satisfy the schema that will parse it at boot? A 10-character
- *     TRIPGENCY_INTERNAL_API_KEY passes `secrets:check --decrypt` and then fails
- *     `.min(32)` when the API starts.
- *   - do the cross-scope pairs still line up? `docs/ops/secrets.md` asks a human
- *     to keep api.TRIPGENCY_INTERNAL_API_KEY_WEB equal to
- *     web.TRIPGENCY_INTERNAL_API_KEY; nothing checked it.
- *   - is anything still a placeholder? `secrets/STAGING-PROD-CHECKLIST.md` is a
- *     list of REPLACE_ME values a person is expected to remember.
+ *     key passes `sops-env check --decrypt` and then fails `.min(32)` when the
+ *     app starts.
+ *   - do the cross-scope pairs still line up? Someone has to keep the two ends of
+ *     a pair equal; nothing checked it.
+ *   - is anything still a placeholder? A list of REPLACE_ME values is a thing a
+ *     person is expected to remember.
  *
  * This reads ciphertext, never the platform. A variable set by hand in the
  * Railway or Vercel dashboard is invisible here, exactly as it is to
- * `secrets:sync` — `docs/ops/secrets.md` covers that case, and this cannot.
+ * `sops-env sync`.
  */
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -28,43 +27,27 @@ import {
   checkPairs,
   findPlaceholders,
   pairFindings,
-  PLACEHOLDER,
   placeholderFindings,
 } from '../model/invariants.mjs';
-import { NOT_DRIFT_WHEN_UNSET, readDeclarations } from './list.mjs';
+import { readDeclarations } from './list.mjs';
 import { buildMatrix } from '../model/matrix.mjs';
 import { secretsFilePath } from '../store/paths.mjs';
 import { projectEnv } from '../store/project.mjs';
-import { APPS, DEPLOYABLE_APPS, ENVIRONMENTS, SCOPE_KEYS } from '../scopes.mjs';
+import { schemaFile } from '../model/env-contract.mjs';
 
 // Re-exported: the placeholder check moved to `invariants.mjs` so the grid could
 // run it without pulling in the audit's process-spawning machinery, and the audit
 // stays the one place that names everything it checks.
-export { findPlaceholders, PLACEHOLDER, placeholderFindings };
+export { findPlaceholders, placeholderFindings };
 
-export const USAGE = `Usage: pnpm secrets:audit [--no-schema] [environment...]
+export const usage = (
+  ctx,
+) => `Usage: sops-env audit [--no-schema] [environment...]
 
   --no-schema   Skip the Zod pass, which spawns one tsx process per app.
 
 Exits non-zero when anything is wrong. Environments default to:
-${ENVIRONMENTS.join(', ')}.`;
-
-/**
- * NODE_ENV as the platform will set it, so the schema's production-only
- * refinements actually fire.
- *
- * The store sets NODE_ENV in no environment, so a projection alone falls back to
- * the schema default of `development` and every `NODE_ENV === 'production'`
- * refinement is silently disarmed — including the one that makes GOOGLE_CLIENT_ID
- * required. ADR-0018 gives each environment its own deploy, and #163 added
- * `staging` to the enum precisely so the platform could set it, so this is what
- * the app will really see. A NODE_ENV in the store still wins over this.
- */
-export const ASSUMED_NODE_ENV = {
-  local: 'development',
-  staging: 'staging',
-  production: 'production',
-};
+${ctx.environments.join(', ')}.`;
 
 /**
  * The environment the child gets: this process's, minus every variable the
@@ -75,28 +58,41 @@ export const ASSUMED_NODE_ENV = {
  * satisfy a schema the store cannot.
  */
 export function childEnvironment(
+  ctx,
   projection,
-  { environment, base = process.env, registry = SCOPE_KEYS } = {},
+  { environment, base = process.env } = {},
 ) {
-  const known = new Set(Object.values(registry).flat());
+  const known = new Set(Object.values(ctx.registry).flat());
   const inherited = Object.fromEntries(
     Object.entries(base).filter(([key]) => !known.has(key)),
   );
+  // `schemaRunner.conditions` maps workspace packages to their sources, so
+  // nothing has to be built first. Passed through NODE_OPTIONS because tsx owns
+  // its own argv, and appended rather than assigned so a developer's own flags
+  // survive.
+  const conditions = ctx.schemaRunner.conditions.map(
+    (condition) => `--conditions=${condition}`,
+  );
+  const nodeOptions = [base.NODE_OPTIONS, ...conditions]
+    .filter(Boolean)
+    .join(' ');
 
   return {
     ...inherited,
-    NODE_ENV: ASSUMED_NODE_ENV[environment] ?? 'development',
+    // The platform sets NODE_ENV, the store does not, so the schema's
+    // production-only refinements would be silently disarmed without this. A
+    // NODE_ENV in the store still wins.
+    NODE_ENV: ctx.nodeEnv[environment] ?? 'development',
     ...projection,
-    // `--conditions` maps @tripgency/* to src/, so nothing has to be built
-    // first. Passed through NODE_OPTIONS because tsx owns its own argv, and
-    // appended rather than assigned so a developer's own flags survive.
-    NODE_OPTIONS: [base.NODE_OPTIONS, '--conditions=@org/source']
-      .filter(Boolean)
-      .join(' '),
+    ...(nodeOptions ? { NODE_OPTIONS: nodeOptions } : {}),
   };
 }
 
-function defaultRunValidator({ app, env }) {
+function defaultRunValidator(ctx, { app, env }) {
+  const file = schemaFile(ctx, app);
+  // An app with no schema has nothing to validate.
+  if (file === null) return { status: 0, stdout: JSON.stringify({ ok: true }) };
+
   const require = createRequire(import.meta.url);
 
   // process.execPath plus a resolved .mjs entry, never a node_modules/.bin
@@ -106,8 +102,11 @@ function defaultRunValidator({ app, env }) {
     process.execPath,
     [
       require.resolve('tsx/cli'),
-      fileURLToPath(new URL('../schema/validate-projection.ts', import.meta.url)),
-      app,
+      fileURLToPath(
+        new URL('../schema/validate-projection.ts', import.meta.url),
+      ),
+      file,
+      ctx.app[app].schema.exportName,
     ],
     {
       encoding: 'utf8',
@@ -123,13 +122,14 @@ function defaultRunValidator({ app, env }) {
 
 /** Run one app's schema over its projection of one environment. */
 export function validateProjection(
+  ctx,
   { environment, app, document },
-  { runValidator = defaultRunValidator, registry = SCOPE_KEYS } = {},
+  { runValidator = defaultRunValidator } = {},
 ) {
-  const projection = projectEnv(document, app, { registry });
-  const result = runValidator({
+  const projection = projectEnv(ctx, document, app);
+  const result = runValidator(ctx, {
     app,
-    env: childEnvironment(projection, { environment, registry }),
+    env: childEnvironment(ctx, projection, { environment }),
   });
 
   if (result.error) {
@@ -192,20 +192,22 @@ export function schemaFindings(environment, app, outcome) {
   ];
 }
 
-export function auditEnvironments({
-  environments = ENVIRONMENTS,
-  withSchema = true,
-  decrypt = decryptSecretsFile,
-  runValidator = defaultRunValidator,
-  registry = SCOPE_KEYS,
-} = {}) {
+export function auditEnvironments(
+  ctx,
+  {
+    environments = ctx.environments,
+    withSchema = true,
+    decrypt = decryptSecretsFile,
+    runValidator = defaultRunValidator,
+  } = {},
+) {
   const inventories = {};
   const findings = [];
   const notes = [];
 
   for (const environment of environments) {
-    const file = secretsFilePath(environment);
-    inventories[environment] = readEnvironment(file).inventory;
+    const file = secretsFilePath(ctx, environment);
+    inventories[environment] = readEnvironment(ctx, file).inventory;
 
     let document;
     try {
@@ -225,33 +227,35 @@ export function auditEnvironments({
     }
 
     findings.push(
-      ...placeholderFindings(environment, findPlaceholders(document)),
+      ...placeholderFindings(environment, findPlaceholders(ctx, document)),
     );
     findings.push(
       ...pairFindings(
         environment,
-        checkPairs((scope, key) => document[scope]?.[key]),
+        checkPairs(ctx, (scope, key) => document[scope]?.[key]),
       ),
     );
 
     if (!withSchema) continue;
 
-    for (const app of APPS) {
-      // An app outside DEPLOYABLE_APPS — `ingest` until it has a platform —
+    for (const app of ctx.apps) {
+      // An app with no destination (`ctx.deployableApps`) —
       // has no `staging` or `production` for its schema to fail against;
       // spawning the validator there anyway is the same drift
-      // `buildMatrix`'s DEPLOYABLE_APPS check already keeps out of
+      // `buildMatrix`'s deployable check already keeps out of
       // `missing-required` (matrix.mjs). `local` is real for every app, so it
       // is always validated.
-      if (environment !== 'local' && !DEPLOYABLE_APPS.includes(app)) continue;
+      if (environment !== 'local' && !ctx.deployableApps.includes(app))
+        continue;
 
       findings.push(
         ...schemaFindings(
           environment,
           app,
           validateProjection(
+            ctx,
             { environment, app, document },
-            { runValidator, registry },
+            { runValidator },
           ),
         ),
       );
@@ -260,12 +264,10 @@ export function auditEnvironments({
 
   // Presence lives in the same report, so one command answers "is the store
   // sound?" instead of two half-answers.
-  const matrix = buildMatrix({
-    registry,
+  const matrix = buildMatrix(ctx, {
     environments,
     inventories,
-    declarations: readDeclarations(),
-    exemptions: NOT_DRIFT_WHEN_UNSET,
+    declarations: readDeclarations(ctx),
   });
   findings.push(...matrix.findings);
 
@@ -288,46 +290,46 @@ export function auditEnvironments({
   };
 }
 
-export function parseAuditArgs(argv) {
+export function parseAuditArgs(ctx, argv) {
   const flags = argv.filter((arg) => arg.startsWith('--'));
   for (const flag of flags) {
     if (!['--no-schema', '--help'].includes(flag)) {
-      throw new Error(`Unknown flag "${flag}".\n\n${USAGE}`);
+      throw new Error(`Unknown flag "${flag}".\n\n${usage(ctx)}`);
     }
   }
 
   const requested = argv.filter((arg) => !arg.startsWith('--'));
   for (const environment of requested) {
-    if (!ENVIRONMENTS.includes(environment)) {
+    if (!ctx.environments.includes(environment)) {
       throw new Error(
-        `Unknown environment "${environment}". Expected one of: ${ENVIRONMENTS.join(', ')}.`,
+        `Unknown environment "${environment}". Expected one of: ${ctx.environments.join(', ')}.`,
       );
     }
   }
 
   return {
-    environments: requested.length > 0 ? requested : ENVIRONMENTS,
+    environments: requested.length > 0 ? requested : ctx.environments,
     withSchema: !flags.includes('--no-schema'),
     help: flags.includes('--help'),
   };
 }
 
-export function main(argv = process.argv.slice(2)) {
+export function main(ctx, argv) {
   let options;
   try {
-    options = parseAuditArgs(argv);
+    options = parseAuditArgs(ctx, argv);
   } catch (error) {
     console.error(error.message);
     return 1;
   }
 
   if (options.help) {
-    console.log(USAGE);
+    console.log(usage(ctx));
     return 0;
   }
 
   try {
-    const { errors, warnings, notes } = auditEnvironments(options);
+    const { errors, warnings, notes } = auditEnvironments(ctx, options);
 
     for (const finding of errors) {
       console.error(`error ${finding.code}: ${finding.message}`);
@@ -343,8 +345,4 @@ export function main(argv = process.argv.slice(2)) {
     console.error(error.message);
     return 1;
   }
-}
-
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  process.exit(main());
 }

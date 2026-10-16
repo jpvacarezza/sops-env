@@ -1,5 +1,5 @@
 /**
- * `pnpm secrets` — the grid, navigable.
+ * `sops-env` — the grid, navigable.
  *
  * This file is the loop and nothing else: it paints what `shell.mjs` renders,
  * reads a key, and performs the effect the reducer asked for. Every effect is
@@ -12,16 +12,16 @@
  * fighting over one stream, and the visible symptom is a prompt that eats
  * keystrokes — so the reader is closed and reopened around each of those.
  */
-import { fileURLToPath } from 'node:url';
-
 import { copyToClipboard } from './clipboard.mjs';
-import { collect, NOT_DRIFT_WHEN_UNSET, readDeclarations } from '../commands/list.mjs';
+import { collect, readDeclarations } from '../commands/list.mjs';
 import {
   checkPairs,
   pairFindings,
   placeholderFindings,
 } from '../model/invariants.mjs';
 import { buildMatrix, countBySeverity } from '../model/matrix.mjs';
+import { destinationFor } from '../model/sync-plan.mjs';
+import { secretsFilePath } from '../store/paths.mjs';
 import { ask, parseConfirm, parseMultiChoice, readHidden } from './prompt.mjs';
 import { createScreen, fitBlock } from './screen.mjs';
 import {
@@ -31,7 +31,6 @@ import {
   writeAcrossEnvironments,
 } from '../commands/set.mjs';
 import { assertWritable } from '../model/set-plan.mjs';
-import { ENVIRONMENTS, SCOPE_KEYS } from '../scopes.mjs';
 import {
   colorSupport,
   initialState,
@@ -43,7 +42,7 @@ import {
   CELL_NOTICE,
 } from './shell.mjs';
 
-export const USAGE = `Usage: pnpm secrets [environment...]
+export const usage = (ctx) => `Usage: sops-env [environment...]
 
 The grid, navigable. Needs a terminal.
 
@@ -55,40 +54,41 @@ The grid, navigable. Needs a terminal.
   s         sync
   ?         help            q  quit
 
-Environments default to: ${ENVIRONMENTS.join(', ')}.
-For scripts, use secrets:list / secrets:set / secrets:audit instead.`;
+Environments default to: ${ctx.environments.join(', ')}.
+For scripts, use sops-env list / set / audit instead.`;
 
 /** Everything the grid needs, in one read. */
-export function load({ environments, withFingerprints }) {
-  const { inventories, meta, fingerprints, lookups, placeholders } = collect({
-    environments,
-    // Always read the values: the placeholder and cross-key checks below need
-    // them, and a row cannot be coloured honestly before they have run —
-    // `production.api.DATABASE_URL` held a REPLACE_ME and would have been green.
-    // Measured at 142ms for three environments against 2ms for the inventory
-    // alone, and an environment whose age key is absent still degrades to
-    // `values: unavailable` rather than failing.
-    withValues: true,
-    // Only when the mode shows them. `renderShell` draws whatever fingerprints
-    // the matrix carries, so handing it any would put them on screen in a mode
-    // nobody turned on.
-    withFingerprints,
-  });
+export function load(ctx, { environments, withFingerprints }) {
+  const { inventories, meta, fingerprints, lookups, placeholders } = collect(
+    ctx,
+    {
+      environments,
+      // Always read the values: the placeholder and cross-key checks below need
+      // them, and a row cannot be coloured honestly before they have run —
+      // `production.api.DATABASE_URL` held a REPLACE_ME and would have been green.
+      // Measured at 142ms for three environments against 2ms for the inventory
+      // alone, and an environment whose age key is absent still degrades to
+      // `values: unavailable` rather than failing.
+      withValues: true,
+      // Only when the mode shows them. `renderShell` draws whatever fingerprints
+      // the matrix carries, so handing it any would put them on screen in a mode
+      // nobody turned on.
+      withFingerprints,
+    },
+  );
 
-  const matrix = buildMatrix({
-    registry: SCOPE_KEYS,
+  const matrix = buildMatrix(ctx, {
     environments,
     inventories,
-    declarations: readDeclarations(),
+    declarations: readDeclarations(ctx),
     fingerprints,
-    exemptions: NOT_DRIFT_WHEN_UNSET,
   });
 
   for (const environment of environments) {
     const lookup = lookups[environment];
     if (!lookup) continue;
     matrix.findings.push(
-      ...pairFindings(environment, checkPairs(lookup)),
+      ...pairFindings(environment, checkPairs(ctx, lookup)),
       // A `REPLACE_ME` in production is set, encrypted, and not a value. Without
       // this the row would be green, which is the one thing green must not say.
       ...placeholderFindings(environment, placeholders[environment] ?? []),
@@ -102,11 +102,11 @@ export function load({ environments, withFingerprints }) {
 /**
  * Ask which environments and what value, then write through the primitive.
  *
- * One value per environment, never one for all three: `docs/ops/secrets.md` says
- * in as many words never to reuse a staging key in production, and an offer to
+ * One value per environment, never one for all three: reusing a staging key
+ * in production is a mistake, and an offer to
  * do it in one keystroke is the wrong shape of convenience.
  */
-async function editRow(row, environments, { screen, environment }) {
+async function editRow(ctx, row, environments, { screen, environment }) {
   screen.write('\n');
   screen.write(`  ${row.scope}.${row.key}\n`);
 
@@ -142,7 +142,7 @@ async function editRow(row, environments, { screen, environment }) {
   screen.write('\n  about to write\n');
   for (const environment of chosen) {
     screen.write(
-      `    ${row.scope}.${row.key} → secrets/${environment}.enc.yaml` +
+      `    ${row.scope}.${row.key} → ${ctx.relative(secretsFilePath(ctx, environment))}` +
         `  (${Buffer.byteLength(values[environment], 'utf8')} bytes)\n`,
     );
   }
@@ -153,6 +153,7 @@ async function editRow(row, environments, { screen, environment }) {
   }
 
   return applyWrite(
+    ctx,
     {
       environments: chosen,
       scope: row.scope,
@@ -165,11 +166,11 @@ async function editRow(row, environments, { screen, environment }) {
 }
 
 /** The one place this file writes, so the reporting is in one place too. */
-function applyWrite(target, { screen, quiet = false } = {}) {
-  assertWritable(target);
-  assertCleanSecrets();
+function applyWrite(ctx, target, { screen, quiet = false } = {}) {
+  assertWritable(ctx, target);
+  assertCleanSecrets(ctx);
 
-  const { applied, failed } = writeAcrossEnvironments(target);
+  const { applied, failed } = writeAcrossEnvironments(ctx, target);
 
   if (!quiet) {
     for (const entry of applied) {
@@ -192,9 +193,9 @@ function applyWrite(target, { screen, quiet = false } = {}) {
   }
 
   if (!quiet) {
-    const stat = secretsDiffStat();
+    const stat = secretsDiffStat(ctx);
     if (stat.length > 0) {
-      screen.write('\n  git diff -w --numstat -- secrets/\n');
+      screen.write(`\n  git diff -w --numstat -- ${ctx.store.dir}/\n`);
       for (const line of stat) screen.write(`    ${line}\n`);
       screen.write(
         '    3 3 for a changed value, 3 2 for a new key. A fourth line is another value.\n',
@@ -213,20 +214,23 @@ function applyWrite(target, { screen, quiet = false } = {}) {
   return { changed, notice };
 }
 
-export async function run({
-  environments = ENVIRONMENTS,
-  output = process.stdout,
-  input = process.stdin,
-} = {}) {
+export async function run(
+  ctx,
+  {
+    environments = ctx.environments,
+    output = process.stdout,
+    input = process.stdin,
+  } = {},
+) {
   if (!input.isTTY) {
     output.write(
-      `${USAGE}\n\nStdin is not a terminal, so there is nothing to navigate with.\n`,
+      `${usage(ctx)}\n\nStdin is not a terminal, so there is nothing to navigate with.\n`,
     );
     return 1;
   }
 
   try {
-    assertCleanSecrets();
+    assertCleanSecrets(ctx);
   } catch (error) {
     output.write(`${error.message}\n`);
     return 1;
@@ -241,11 +245,18 @@ export async function run({
   // at 142ms for three environments, against 2ms without — and an environment
   // whose key is missing degrades to `values: unavailable` in the header rather
   // than failing. Nothing is *shown*: the mode is still `none`.
-  let { matrix, meta, lookups } = load({
+  // `railway/api`, `vercel/web`: labels the providers know, read here so the
+  // shell has no config of its own to consult.
+  const destinations = Object.fromEntries(
+    ctx.apps
+      .map((app) => [app, destinationFor(ctx, app)])
+      .filter(([, label]) => label !== null),
+  );
+  let { matrix, meta, lookups } = load(ctx, {
     environments,
     withFingerprints: false,
   });
-  let state = initialState({ matrix, environments, values });
+  let state = initialState({ matrix, environments, values, destinations });
   let keys = screen.keys();
 
   /** Hand raw mode back, do something that reads input its own way, take it again. */
@@ -262,12 +273,12 @@ export async function run({
   };
 
   const reload = () => {
-    ({ matrix, meta, lookups } = load({
+    ({ matrix, meta, lookups } = load(ctx, {
       environments,
       withFingerprints: values === 'fingerprint',
     }));
     state = {
-      ...initialState({ matrix, environments, values }),
+      ...initialState({ matrix, environments, values, destinations }),
       // Keep the reader where they were. A fresh load would move the cursor to
       // the first error, which after a successful write is a different row.
       selected: state.selected,
@@ -281,7 +292,7 @@ export async function run({
 
   const writeQuietly = (target) => {
     try {
-      return applyWrite(target, { screen, quiet: true });
+      return applyWrite(ctx, target, { screen, quiet: true });
     } catch (error) {
       return {
         changed: false,
@@ -408,9 +419,12 @@ export async function run({
 
     if (effect.kind === 'sync') {
       await withOwnInput(() =>
-        // 'shared' so offerSync picks `all`: from the grid you are syncing an
-        // environment, not the one app whose row happens to be under the cursor.
-        offerSync({ environments, scope: 'shared' }),
+        // A non-app scope so offerSync picks `all`: from the grid you are syncing
+        // an environment, not the one app whose row happens to be under the cursor.
+        offerSync(ctx, {
+          environments,
+          scope: ctx.scopes.find((name) => !ctx.apps.includes(name)) ?? 'all',
+        }),
       );
       paint();
       continue;
@@ -456,7 +470,7 @@ export async function run({
     if (effect.kind === 'write') {
       let changed = false;
       await withOwnInput(async () => {
-        changed = await editRow(effect.row, environments, {
+        changed = await editRow(ctx, effect.row, environments, {
           screen,
           environment: effect.environment,
         });
@@ -473,30 +487,26 @@ export async function run({
   return 0;
 }
 
-export function main(argv = process.argv.slice(2)) {
+export function main(ctx, argv) {
   if (argv.includes('--help') || argv.includes('-h')) {
-    console.log(USAGE);
+    console.log(usage(ctx));
     return Promise.resolve(0);
   }
 
   const requested = argv.filter((arg) => !arg.startsWith('-'));
   for (const environment of requested) {
-    if (!ENVIRONMENTS.includes(environment)) {
+    if (!ctx.environments.includes(environment)) {
       console.error(
-        `Unknown environment "${environment}". Expected one of: ${ENVIRONMENTS.join(', ')}.`,
+        `Unknown environment "${environment}". Expected one of: ${ctx.environments.join(', ')}.`,
       );
       return Promise.resolve(1);
     }
   }
 
-  return run({
-    environments: requested.length > 0 ? requested : ENVIRONMENTS,
+  return run(ctx, {
+    environments: requested.length > 0 ? requested : ctx.environments,
   }).catch((error) => {
     console.error(error.message);
     return 1;
   });
-}
-
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  main().then((code) => process.exit(code));
 }

@@ -1,5 +1,3 @@
-import { fileURLToPath } from 'node:url';
-
 import { decryptSecretsFile } from '../store/decrypt.mjs';
 import { secretsFilePath } from '../store/paths.mjs';
 import {
@@ -17,10 +15,10 @@ import { parseSyncArgs, planSync } from '../model/sync-plan.mjs';
  * Deploy is not triggered here (Railway skipDeploys; Vercel env writes do not
  * redeploy) — ADR-0018's git signals remain the promotion path.
  */
-export async function main(argv = process.argv.slice(2)) {
+export async function main(ctx, argv) {
   let parsed;
   try {
-    parsed = parseSyncArgs(argv);
+    parsed = parseSyncArgs(ctx, argv);
   } catch (error) {
     console.error(error.message);
     return 1;
@@ -30,13 +28,13 @@ export async function main(argv = process.argv.slice(2)) {
 
   let doc;
   try {
-    doc = decryptSecretsFile(secretsFilePath(environment));
+    doc = decryptSecretsFile(secretsFilePath(ctx, environment));
   } catch (error) {
     console.error(error.message);
     return 1;
   }
 
-  const plan = planSync(doc, { environment, apps });
+  const plan = planSync(ctx, doc, { environment, apps });
 
   for (const row of plan) {
     const label = `${row.destination} (${environment}): ${row.keys.length} keys — ${row.keys.join(', ')}`;
@@ -46,12 +44,13 @@ export async function main(argv = process.argv.slice(2)) {
     }
 
     try {
-      if (row.app === 'api') {
+      const provider = ctx.app[row.app].destination.provider;
+      if (provider === 'railway') {
         const config = resolveRailwayConfig(environment);
         await upsertRailwayVariables({ ...config, env: row.getEnv() });
       } else {
         const config = resolveVercelConfig(row.app, environment);
-        await upsertVercelEnv({ ...config, env: row.getEnv() });
+        await upsertVercelEnv({ ...config, env: row.getEnv(), ctx });
       }
       console.log(`upserted ${label}`);
     } catch (error) {
@@ -61,8 +60,4 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   return 0;
-}
-
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  main().then((code) => process.exit(code));
 }

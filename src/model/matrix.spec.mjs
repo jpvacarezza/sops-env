@@ -369,7 +369,7 @@ describe('the fixture repository', () => {
     }
   });
 
-  it('finds no undeclared and no plaintext key, which secrets:sync also requires', () => {
+  it('finds no undeclared and no plaintext key, which sops-env sync also requires', () => {
     expect(matrix.totals.undeclared).toBe(0);
     expect(codes(matrix)).not.toContain('not-encrypted');
   });

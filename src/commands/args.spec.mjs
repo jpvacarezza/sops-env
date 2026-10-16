@@ -19,7 +19,7 @@ import { parseRunArgs } from './args.mjs';
  */
 const posix = (value) => value.replaceAll('\\', '/');
 
-const ctx = registryCtx({ shared: [], api: [] });
+const ctx = registryCtx({ shared: [], api: [], web: [], admin: [] });
 
 describe('secretsFilePath', () => {
   it('maps an environment onto its ciphertext file under root', () => {
@@ -56,14 +56,14 @@ describe('appEnvFilePath', () => {
 describe('decryptSecretsFile', () => {
   const okRun = () => ({
     status: 0,
-    stdout: JSON.stringify({ shared: { TRIPGENCY_INTERNAL_API_KEY: 'x' } }),
+    stdout: JSON.stringify({ shared: { INTERNAL_API_KEY: 'x' } }),
     stderr: '',
   });
 
   it('returns the parsed document', () => {
     expect(
       decryptSecretsFile('secrets/local.enc.yaml', { runSops: okRun }),
-    ).toEqual({ shared: { TRIPGENCY_INTERNAL_API_KEY: 'x' } });
+    ).toEqual({ shared: { INTERNAL_API_KEY: 'x' } });
   });
 
   it('explains how to install sops when the binary is missing', () => {
@@ -139,7 +139,7 @@ describe('formatEnvFile', () => {
 describe('parseRunArgs', () => {
   it('splits environment, app and the command after --', () => {
     expect(
-      parseRunArgs(['local', 'api', '--', 'pnpm', 'nx', 'serve', 'api']),
+      parseRunArgs(ctx, ['local', 'api', '--', 'pnpm', 'nx', 'serve', 'api']),
     ).toEqual({
       environment: 'local',
       app: 'api',
@@ -148,22 +148,24 @@ describe('parseRunArgs', () => {
   });
 
   it('requires a -- separator so the command is never guessed', () => {
-    expect(() => parseRunArgs(['local', 'api', 'pnpm', 'nx', 'serve'])).toThrow(
-      /--/,
-    );
+    expect(() =>
+      parseRunArgs(ctx, ['local', 'api', 'pnpm', 'nx', 'serve']),
+    ).toThrow(/--/);
   });
 
   it('rejects an empty command', () => {
-    expect(() => parseRunArgs(['local', 'api', '--'])).toThrow(/command/i);
+    expect(() => parseRunArgs(ctx, ['local', 'api', '--'])).toThrow(/command/i);
   });
 
   it('rejects an unknown app before anything is decrypted', () => {
-    expect(() => parseRunArgs(['local', 'storybook', '--', 'echo'])).toThrow(
-      /storybook/,
-    );
+    expect(() =>
+      parseRunArgs(ctx, ['local', 'storybook', '--', 'echo']),
+    ).toThrow(/storybook/);
   });
 
   it('rejects an unknown environment', () => {
-    expect(() => parseRunArgs(['prod', 'api', '--', 'echo'])).toThrow(/prod/);
+    expect(() => parseRunArgs(ctx, ['prod', 'api', '--', 'echo'])).toThrow(
+      /prod/,
+    );
   });
 });

@@ -1,5 +1,4 @@
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 
 import { decryptSecretsFile } from '../store/decrypt.mjs';
 import { parseRunArgs } from './args.mjs';
@@ -10,13 +9,13 @@ import { secretsFilePath } from '../store/paths.mjs';
  * Decrypt, project the scopes this app receives, and run a command with them.
  *
  * Nothing touches the disk: this is the path that avoids a plaintext
- * `.env.local` existing at all. `secrets:materialize` is the escape hatch for
+ * `.env.local` existing at all. `sops-env materialize` is the escape hatch for
  * tools that insist on a file.
  */
-export function main(argv = process.argv.slice(2)) {
+export function main(ctx, argv) {
   let parsed;
   try {
-    parsed = parseRunArgs(argv);
+    parsed = parseRunArgs(ctx, argv);
   } catch (error) {
     console.error(error.message);
     return 1;
@@ -26,15 +25,15 @@ export function main(argv = process.argv.slice(2)) {
 
   let env;
   try {
-    const doc = decryptSecretsFile(secretsFilePath(environment));
-    env = projectEnv(doc, app);
+    const doc = decryptSecretsFile(secretsFilePath(ctx, environment));
+    env = projectEnv(ctx, doc, app);
   } catch (error) {
     console.error(error.message);
     return 1;
   }
 
   console.error(
-    `secrets: injecting ${Object.keys(env).length} variables for ${app} (${environment})`,
+    `sops-env: injecting ${Object.keys(env).length} variables for ${app} (${environment})`,
   );
 
   // The projection wins over the ambient environment: a stale exported value
@@ -50,8 +49,4 @@ export function main(argv = process.argv.slice(2)) {
   }
 
   return result.status ?? 1;
-}
-
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  process.exit(main());
 }

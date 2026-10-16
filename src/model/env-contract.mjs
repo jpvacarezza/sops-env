@@ -166,7 +166,7 @@ function declarationFrom(body) {
  * ISO-3166 list; `GOOGLE_CLIENT_ID` reads as `optional` and is required in
  * production by an object-level refinement no source scan can evaluate. Running
  * the real schema over the real projection is the only way to check those —
- * which is what `secrets:audit` does.
+ * which is what `sops-env audit` does.
  */
 export function readSchemaDeclarations(source) {
   const code = stripComments(source);

@@ -1,36 +1,33 @@
 import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-import { WORKSPACE_ROOT, secretsFilePath } from '../store/paths.mjs';
-import { ENVIRONMENTS } from '../scopes.mjs';
+import { secretsFilePath, sopsConfigPath } from '../store/paths.mjs';
 
-const USAGE = `usage: pnpm secrets:edit <${ENVIRONMENTS.join('|')}>`;
-
-export function main(argv = process.argv.slice(2)) {
+export function main(ctx, argv) {
   const [environment] = argv;
+  const usage = `usage: sops-env edit <${ctx.environments.join('|')}>`;
 
   let file;
   try {
-    file = secretsFilePath(environment);
+    file = secretsFilePath(ctx, environment);
   } catch (error) {
-    console.error(`${error.message}\n${USAGE}`);
+    console.error(`${error.message}\n${usage}`);
     return 1;
   }
 
-  if (!existsSync(join(WORKSPACE_ROOT, '.sops.yaml'))) {
+  if (!existsSync(sopsConfigPath(ctx))) {
     console.error(
-      'No .sops.yaml at the repository root, so sops has no recipients to encrypt for.\n' +
-        'Run `pnpm secrets:init --local <age1...>` first (see secrets/README.md).',
+      `No ${ctx.store.sopsConfig} at ${ctx.root}, so sops has no recipients to encrypt for.\n` +
+        `Run \`sops-env init --${ctx.environments[0]} <age1...>\` first.`,
     );
     return 1;
   }
 
   // `sops` both creates and edits: on a missing file it opens an empty buffer
   // and encrypts on save using the matching creation rule. stdio is inherited
-  // so $EDITOR gets a real terminal.
-  const result = spawnSync('sops', [file], { stdio: 'inherit' });
+  // so $EDITOR gets a real terminal. cwd is the project root: sops finds the
+  // creation rules by walking up from there.
+  const result = spawnSync('sops', [file], { stdio: 'inherit', cwd: ctx.root });
 
   if (result.error?.code === 'ENOENT') {
     console.error(
@@ -43,8 +40,4 @@ export function main(argv = process.argv.slice(2)) {
   }
 
   return result.status ?? 1;
-}
-
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  process.exit(main());
 }

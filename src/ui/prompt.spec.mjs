@@ -140,7 +140,7 @@ describe('parseConfirm', () => {
 describe('readHidden', () => {
   it('refuses when stdin is not a terminal, and points at the piped form', async () => {
     await expect(readHidden('> ', { input: { isTTY: false } })).rejects.toThrow(
-      /pnpm secrets:set/,
+      /sops-env set/,
     );
   });
 

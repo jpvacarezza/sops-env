@@ -1,5 +1,5 @@
 /**
- * The state machine behind `pnpm secrets`, and its rendering. Both pure.
+ * The state machine behind `sops-env`, and its rendering. Both pure.
  *
  * `reduce(state, key)` returns the next state and an effect, where an effect is
  * data — `{ kind: 'write' }`, `{ kind: 'sync' }` — and never an action. The loop
@@ -16,7 +16,6 @@
  * silently — and the next keystroke after that is Enter on whatever is under it.
  */
 import { cellMarker, MARKS, schemaMarker } from '../commands/list.mjs';
-import { destinationFor } from '../model/sync-plan.mjs';
 
 const SEVERITY_RANK = { error: 2, warn: 1 };
 
@@ -312,13 +311,19 @@ export function selectedRow(state) {
  */
 export const VALUE_MODES = ['none', 'fingerprint', 'value'];
 
-export function initialState({ matrix, environments, values = 'none' }) {
+export function initialState({
+  matrix,
+  environments,
+  values = 'none',
+  destinations = {},
+}) {
   const rows = buildRows(matrix);
   const firstError = rows.find((row) => row.severity === 'error');
 
   return {
     rows,
     environments,
+    destinations,
     selected: rowId(firstError ?? rows[0] ?? { scope: '', key: '' }),
     filter: 'all',
     values,
@@ -857,12 +862,12 @@ export function layout({
  * one window and `loca stag prod` in another.
  *
  * These are display labels only. `local` is the store's name for the environment —
- * it is the file (`secrets/local.enc.yaml`), the argument (`pnpm secrets:set local
+ * it is the file (`secrets/local.enc.yaml`), the argument (`sops-env set local
  * …`) and what every message about a write says. A heading is the one place a
  * shorter word costs nothing.
  *
  * An environment the map does not know falls back to its own name, so adding one to
- * `scopes.mjs` renders a heading rather than a blank.
+ * `secrets.config.mjs` renders a heading rather than a blank.
  */
 const ENVIRONMENT_LABELS = {
   local: { short: 'DEV', long: 'DEVELOPMENT' },
@@ -884,7 +889,7 @@ function columnLabel(name) {
  *
  * `local` reads `DEVELOPMENT` here. It is a display label like the others: the
  * environment is still `local` in `secrets/local.enc.yaml`, in
- * `pnpm secrets:set local api KEY`, and in every message about a write — and the
+ * `sops-env set local api KEY`, and in every message about a write — and the
  * banner across the top still lists the real three, so the name you would type is
  * never off the screen.
  */
@@ -1130,7 +1135,7 @@ const REASONS = {
       ? `required, not in ${findings[0].environment}`
       : `required, not in ${findings.length}/${total}`,
   'missing-everywhere': () => 'declared, never set',
-  undeclared: () => 'not in scopes.mjs',
+  undeclared: () => 'not in secrets.config.mjs',
   'not-encrypted': (findings) => `plaintext in ${findings[0].environment}`,
   placeholder: (findings, total) =>
     findings.length === 1
@@ -1300,7 +1305,7 @@ export function renderShell(
       // word: this line is a divider between scopes and the whole line is the
       // divider. Elided before padding so a long destination list cannot push it
       // past the terminal — `padEnd` would not shorten it.
-      const heading = `  ${scope} → ${destinations(row.receivingApps)}`;
+      const heading = `  ${scope} → ${destinations(state, row.receivingApps)}`;
       lines.push(
         paint(elide(heading, width.total).padEnd(width.total), 'heading', {
           colors,
@@ -1601,9 +1606,9 @@ function hints(state, pane, columns) {
   return '↑↓ move · ⏎ the detail below · v back from values · e errors · q quit';
 }
 
-/** `railway/api`, `vercel/web` — read from the same rule the sync applies. */
-function destinations(apps) {
-  return apps.map(destinationFor).join(', ');
+/** `railway/api`, `vercel/web` — the labels the loop read from the providers; `app` when it has none. */
+function destinations(state, apps) {
+  return apps.map((app) => state.destinations[app] ?? app).join(', ');
 }
 
 /**
@@ -1626,7 +1631,7 @@ function renderSide(state, row, meta, cellValue, width, colors) {
   ];
 
   const gutter = 10;
-  for (const [label, value] of detailFacts(row)) {
+  for (const [label, value] of detailFacts(state, row)) {
     const [first, ...rest] = wrap(value, width, ' '.repeat(gutter));
     lines.push(label.padEnd(gutter) + (first ?? '').trimStart());
     lines.push(...rest);
@@ -1769,9 +1774,9 @@ function findingsByCode(row) {
   return [...grouped.values()].map((group) => [group[0].code, group]);
 }
 
-function detailFacts(row) {
+function detailFacts(state, row) {
   return [
-    ['scope', `${row.scope} → ${destinations(row.receivingApps)}`],
+    ['scope', `${row.scope} → ${destinations(state, row.receivingApps)}`],
     [
       'schema',
       row.schema
@@ -1781,9 +1786,10 @@ function detailFacts(row) {
     [
       'registry',
       row.declared
-        ? 'declared in scopes.mjs'
-        : 'NOT declared — secrets:sync would refuse the projection',
+        ? 'declared in secrets.config.mjs'
+        : 'NOT declared — sops-env sync would refuse the projection',
     ],
+    ...(row.note ? [['note', row.note]] : []),
   ];
 }
 
@@ -1817,13 +1823,13 @@ function renderDetail(state, row, meta, columns) {
     `  ${MARKS.rule.repeat(4)} ${row.key} ${MARKS.rule.repeat(4)}`,
   ];
 
-  for (const [label, value] of detailFacts(row)) {
+  for (const [label, value] of detailFacts(state, row)) {
     lines.push(prose(`  ${label.padEnd(11)}${value}`, columns));
   }
 
   // No `lastmodified` here. SOPS stamps the file, not the key, so printing it
   // beside "not set" reads as "this variable changed then" — which is the one
-  // thing it cannot mean. The file stamps are in the `secrets:list` header.
+  // thing it cannot mean. The file stamps are in the `sops-env list` header.
   for (const environment of state.environments) {
     const cell = row.cells[environment];
     lines.push(

@@ -1,11 +1,11 @@
 /**
- * `pnpm secrets:set` / `pnpm secrets:unset` — change one variable, per cell.
+ * `sops-env set` / `sops-env unset` — change one variable, per cell.
  *
  * Per cell and never by rewriting the document, for two measured reasons.
  * `sops -d --output-type json` cannot represent the encrypted `type:comment`
  * lines staging and production each open with, so a decrypt-modify-reencrypt
  * pass deletes them silently. And `sops -e -i` re-encrypts every value with a
- * fresh IV, which destroys the review property `secrets/README.md` names as the
+ * fresh IV, which destroys the review property the store directory's README names as the
  * approval criterion for this directory: three changed lines per edit — the key,
  * `lastmodified`, `mac` — and any fourth line is a real change to a value.
  *
@@ -14,49 +14,45 @@
  * value's IV within one process when the plaintext is unchanged.
  *
  * There is no transaction across files. Writing three environments is three sops
- * invocations, so the safety net is that `git checkout -- secrets/` is a clean
+ * invocations, so the safety net is that `git checkout -- <store.dir>/` is a clean
  * undo — which only holds if the directory started clean, hence the refusal.
  */
 import { spawnSync } from 'node:child_process';
-import { relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { decryptSecretsFile, INSTALL_HINT } from '../store/decrypt.mjs';
-import { secretsFilePath, WORKSPACE_ROOT } from '../store/paths.mjs';
+import { secretsFilePath, storeDir } from '../store/paths.mjs';
 import { assertValidDocument } from '../store/project.mjs';
 import { ask, parseConfirm } from '../ui/prompt.mjs';
-import { APPS, SCOPE_KEYS } from '../scopes.mjs';
+import { main as syncMain } from './sync.mjs';
 import {
   assertWritable,
   normalizeStdin,
   parseSetArgs,
   setArgs,
-  SET_USAGE,
+  setUsage,
   unsetArgs,
-  UNSET_USAGE,
+  unsetUsage,
 } from '../model/set-plan.mjs';
 
-function defaultRunSops(args) {
-  return spawnSync('sops', args, { encoding: 'utf8', cwd: WORKSPACE_ROOT });
-}
+const defaultRunSops = (ctx, args) =>
+  spawnSync('sops', args, { encoding: 'utf8', cwd: ctx.root });
 
-function defaultRunGit(args) {
-  return spawnSync('git', args, { encoding: 'utf8', cwd: WORKSPACE_ROOT });
-}
+const defaultRunGit = (ctx, args) =>
+  spawnSync('git', args, { encoding: 'utf8', cwd: ctx.root });
 
 /**
- * Refuse to start with `secrets/` already dirty.
+ * Refuse to start with the store directory already dirty.
  *
- * The undo for a partial write is `git checkout -- secrets/`, and with someone
+ * The undo for a partial write is `git checkout -- <store.dir>/`, and with someone
  * else's uncommitted change sitting there that undo throws their work away too.
  * Refusing is also the only honest answer to "which of these edits was mine".
  */
-export function assertCleanSecrets({ runGit = defaultRunGit } = {}) {
-  const result = runGit(['status', '--porcelain', '--', 'secrets']);
+export function assertCleanSecrets(ctx, { runGit = defaultRunGit } = {}) {
+  const result = runGit(ctx, ['status', '--porcelain', '--', ctx.store.dir]);
 
   if (result.error || result.status !== 0) {
     throw new Error(
-      'Could not ask git whether secrets/ is clean, so the undo for a partial ' +
+      `Could not ask git whether ${ctx.store.dir}/ is clean, so the undo for a partial ` +
         `write cannot be relied on. ${result.error?.message ?? (result.stderr || '').trim()}`,
     );
   }
@@ -67,20 +63,20 @@ export function assertCleanSecrets({ runGit = defaultRunGit } = {}) {
 
   if (dirty.length > 0) {
     throw new Error(
-      `secrets/ has uncommitted changes:\n${dirty.map((line) => `  ${line}`).join('\n')}\n` +
+      `${ctx.store.dir}/ has uncommitted changes:\n${dirty.map((line) => `  ${line}`).join('\n')}\n` +
         'This writes one file at a time with no transaction, so ' +
-        '`git checkout -- secrets/` is the undo — and it would take those ' +
+        `\`git checkout -- ${ctx.store.dir}/\` is the undo — and it would take those ` +
         'changes with it. Commit or discard them first.',
     );
   }
 }
 
 /** Read all of stdin. Refuses a terminal, which would otherwise just hang. */
-export function readStdin(stream = process.stdin) {
+export function readStdin(ctx, stream = process.stdin) {
   if (stream.isTTY) {
     return Promise.reject(
       new Error(
-        `No value on stdin.\n\n${SET_USAGE}\n\nStdin is a terminal, so this ` +
+        `No value on stdin.\n\n${setUsage(ctx)}\n\nStdin is a terminal, so this ` +
           'would have waited forever. Pipe the value in.',
       ),
     );
@@ -109,30 +105,27 @@ export function readStdin(stream = process.stdin) {
  * coerced, and a silent type change surfaces much later as a Zod failure at boot.
  */
 export function writeCell(
+  ctx,
   { environment, scope, key, value, mode = 'set' },
-  {
-    runSops = defaultRunSops,
-    decrypt = decryptSecretsFile,
-    registry = SCOPE_KEYS,
-  } = {},
+  { runSops = defaultRunSops, decrypt = decryptSecretsFile } = {},
 ) {
-  assertWritable({ scope, key }, { registry });
+  assertWritable(ctx, { scope, key });
 
-  const file = secretsFilePath(environment);
-  const shown = relative(WORKSPACE_ROOT, file).split('\\').join('/');
+  const file = secretsFilePath(ctx, environment);
+  const shown = ctx.relative(file);
   const document = decrypt(file);
 
   const next = { ...document, [scope]: { ...(document[scope] ?? {}) } };
   if (mode === 'unset') delete next[scope][key];
   else next[scope][key] = String(value);
 
-  assertValidDocument(next, { registry });
+  assertValidDocument(ctx, next);
 
   const args =
     mode === 'unset'
       ? unsetArgs(file, scope, key)
       : setArgs(file, scope, key, value);
-  const result = runSops(args);
+  const result = runSops(ctx, args);
 
   if (result.error) {
     if (result.error.code === 'ENOENT') {
@@ -181,21 +174,22 @@ export function writeCell(
  * already been written and the set is half-applied.
  */
 export function writeAcrossEnvironments(
+  ctx,
   { environments, scope, key, value, values, mode = 'set' },
-  { decrypt = decryptSecretsFile, registry = SCOPE_KEYS, ...seams } = {},
+  { decrypt = decryptSecretsFile, ...seams } = {},
 ) {
-  assertWritable({ scope, key }, { registry });
+  assertWritable(ctx, { scope, key });
 
   // `values` is a per-environment map, which is what the grid produces: it asks
   // once per environment rather than offering one value for all three, because
-  // docs/ops/secrets.md says in as many words never to reuse a staging key in
+  // never reuse a staging key in
   // production.
   const valueFor = (environment) => (values ? values[environment] : value);
 
   // The preflight decrypts every target *and* validates the document each write
   // would produce. Decrypting alone was not enough: an already-invalid
   // production document — an undeclared key someone added by hand — is refused
-  // per-cell, so `secrets:set all` wrote local and staging and then stopped,
+  // per-cell, so `set all` wrote local and staging and then stopped,
   // which is the half-applied state this preflight exists to prevent. The
   // documents are decrypted here anyway, so checking them costs nothing.
   const unreadable = [];
@@ -203,7 +197,7 @@ export function writeAcrossEnvironments(
   for (const environment of environments) {
     let document;
     try {
-      document = decrypt(secretsFilePath(environment));
+      document = decrypt(secretsFilePath(ctx, environment));
     } catch (error) {
       unreadable.push(`${environment}: ${error.message.split('\n')[0]}`);
       continue;
@@ -214,7 +208,7 @@ export function writeAcrossEnvironments(
     else next[scope][key] = String(valueFor(environment));
 
     try {
-      assertValidDocument(next, { registry });
+      assertValidDocument(ctx, next);
     } catch (error) {
       invalid.push(
         `${environment}: ${error.message.split('\n').slice(1).join(' ').trim()}`,
@@ -239,8 +233,9 @@ export function writeAcrossEnvironments(
     try {
       applied.push(
         writeCell(
+          ctx,
           { environment, scope, key, value: valueFor(environment), mode },
-          { decrypt, registry, ...seams },
+          { decrypt, ...seams },
         ),
       );
     } catch (error) {
@@ -254,9 +249,9 @@ export function writeAcrossEnvironments(
   return { applied, failed: null };
 }
 
-/** `git diff -w --numstat -- secrets/`, the repo's documented review step. */
-export function secretsDiffStat({ runGit = defaultRunGit } = {}) {
-  const result = runGit(['diff', '-w', '--numstat', '--', 'secrets']);
+/** `git diff -w --numstat -- <store.dir>/`, the documented review step. */
+export function secretsDiffStat(ctx, { runGit = defaultRunGit } = {}) {
+  const result = runGit(ctx, ['diff', '-w', '--numstat', '--', ctx.store.dir]);
   if (result.error || result.status !== 0) return [];
 
   return (result.stdout || '')
@@ -264,13 +259,8 @@ export function secretsDiffStat({ runGit = defaultRunGit } = {}) {
     .filter((line) => line.trim() !== '');
 }
 
-function defaultRunSync(args) {
-  return spawnSync(
-    process.execPath,
-    [fileURLToPath(new URL('./sync.mjs', import.meta.url)), ...args],
-    { encoding: 'utf8', cwd: WORKSPACE_ROOT, stdio: 'inherit' },
-  );
-}
+/** In-process: the sync command is a function now, so no child process and no second config load. */
+const defaultRunSync = (ctx, args) => syncMain(ctx, args);
 
 /**
  * Dry-run the sync for what was just written, then offer the real one.
@@ -278,25 +268,24 @@ function defaultRunSync(args) {
  * Never unattended. A sync writes to a live Vercel or Railway project, and the
  * confirmation is the only thing between a typo and production; with no terminal
  * to confirm at, this stops after the dry run and prints the command instead.
- * `local` is filtered out because `secrets:sync` refuses it by design.
+ * Environments that do not sync are filtered out: `sync` refuses them by design.
  */
 export async function offerSync(
+  ctx,
   { environments, scope },
   { runSync = defaultRunSync, input = process.stdin } = {},
 ) {
-  const targets = environments.filter((name) => name !== 'local');
+  const targets = environments.filter((name) => ctx.syncable.includes(name));
   if (targets.length === 0) return 0;
 
   // Only the app the scope actually feeds. `shared` merges into all three.
-  const app = APPS.includes(scope) ? scope : 'all';
+  const app = ctx.apps.includes(scope) ? scope : 'all';
 
   for (const environment of targets) {
-    console.log(`\n$ pnpm secrets:sync ${environment} ${app} --dry-run`);
-    const dry = runSync([environment, app, '--dry-run']);
-    if (dry.error || dry.status !== 0) {
-      console.error(
-        `The dry run failed, so nothing was synced. ${dry.error?.message ?? ''}`,
-      );
+    console.log(`\n$ sops-env sync ${environment} ${app} --dry-run`);
+    const code = await runSync(ctx, [environment, app, '--dry-run']);
+    if (code !== 0) {
+      console.error('The dry run failed, so nothing was synced.');
       return 1;
     }
   }
@@ -318,9 +307,8 @@ export async function offerSync(
   }
 
   for (const environment of targets) {
-    console.log(`\n$ pnpm secrets:sync ${environment} ${app}`);
-    const real = runSync([environment, app]);
-    if (real.error || real.status !== 0) {
+    console.log(`\n$ sops-env sync ${environment} ${app}`);
+    if ((await runSync(ctx, [environment, app])) !== 0) {
       console.error(`Sync failed for ${environment}.`);
       return 1;
     }
@@ -329,13 +317,10 @@ export async function offerSync(
   return 0;
 }
 
-export async function main(
-  argv = process.argv.slice(2),
-  { mode = 'set' } = {},
-) {
+export async function main(ctx, argv, { mode = 'set' } = {}) {
   const flags = argv.filter((arg) => arg.startsWith('--'));
   const positional = argv.filter((arg) => !arg.startsWith('--'));
-  const usage = mode === 'unset' ? UNSET_USAGE : SET_USAGE;
+  const usage = mode === 'unset' ? unsetUsage(ctx) : setUsage(ctx);
 
   for (const flag of flags) {
     if (!['--sync', '--help'].includes(flag)) {
@@ -364,19 +349,19 @@ export async function main(
   }
 
   try {
-    assertCleanSecrets();
+    assertCleanSecrets(ctx);
   } catch (error) {
     console.error(error.message);
     return 1;
   }
 
-  // This used to run a linear guided form here. `pnpm secrets` replaced it: the
+  // This used to run a linear guided form here. `sops-env` with no arguments replaced it: the
   // grid shows which variable lives in which scope and which environments have
   // it, which was the actual difficulty, and it does not end after one write.
   if (positional.length === 0) {
     console.error(
       `Nothing to write.\n\n${usage}\n\nTo pick a variable interactively, run ` +
-        '`pnpm secrets` — the grid, with the same write path underneath.',
+        '`sops-env` — the grid, with the same write path underneath.',
     );
     return 1;
   }
@@ -385,8 +370,8 @@ export async function main(
   let value = null;
 
   try {
-    target = parseSetArgs(argv, { usage });
-    assertWritable(target);
+    target = parseSetArgs(ctx, argv, { usage });
+    assertWritable(ctx, target);
   } catch (error) {
     console.error(error.message);
     return 1;
@@ -394,7 +379,7 @@ export async function main(
 
   if (mode === 'set') {
     try {
-      const raw = await readStdin();
+      const raw = await readStdin(ctx);
       const normalized = normalizeStdin(raw);
       value = normalized.value;
 
@@ -403,7 +388,7 @@ export async function main(
           'Refusing to write an empty value. An empty string and an unset ' +
             'variable mean different things to the schemas — several treat "" ' +
             'as absent — so say which you meant: pipe a real value, or use ' +
-            '`pnpm secrets:unset`.',
+            '`sops-env unset`.',
         );
         return 1;
       }
@@ -419,7 +404,7 @@ export async function main(
   }
 
   try {
-    const { applied, failed } = writeAcrossEnvironments({
+    const { applied, failed } = writeAcrossEnvironments(ctx, {
       ...target,
       value,
       mode,
@@ -437,15 +422,15 @@ export async function main(
       console.error(
         `Failed on ${failed.environment}: ${failed.message}\n` +
           `${applied.length} environment(s) were already written. There is no ` +
-          'transaction across files — `git diff -- secrets/` shows what changed ' +
-          'and `git checkout -- secrets/` undoes all of it.',
+          `transaction across files — \`git diff -- ${ctx.store.dir}/\` shows what changed ` +
+          `and \`git checkout -- ${ctx.store.dir}/\` undoes all of it.`,
       );
       return 1;
     }
 
-    const stat = secretsDiffStat();
+    const stat = secretsDiffStat(ctx);
     if (stat.length > 0) {
-      console.log('\ngit diff -w --numstat -- secrets/');
+      console.log(`\ngit diff -w --numstat -- ${ctx.store.dir}/`);
       for (const line of stat) console.log(`  ${line}`);
       console.log(
         '  Expect 3 3 per file for a changed value, and 3 2 for a new key: the ' +
@@ -454,15 +439,17 @@ export async function main(
     }
 
     if (flags.includes('--sync')) {
-      return offerSync(target);
+      return offerSync(ctx, target);
     }
 
-    const remaining = target.environments.filter((name) => name !== 'local');
+    const remaining = target.environments.filter((name) =>
+      ctx.syncable.includes(name),
+    );
     if (remaining.length > 0) {
-      const app = APPS.includes(target.scope) ? target.scope : 'all';
+      const app = ctx.apps.includes(target.scope) ? target.scope : 'all';
       console.log(
         `\nNext, when you want the platforms to see it:\n${remaining
-          .map((name) => `  pnpm secrets:sync ${name} ${app} --dry-run`)
+          .map((name) => `  sops-env sync ${name} ${app} --dry-run`)
           .join('\n')}`,
       );
     }
@@ -472,8 +459,4 @@ export async function main(
     console.error(error.message);
     return 1;
   }
-}
-
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  main().then((code) => process.exit(code));
 }

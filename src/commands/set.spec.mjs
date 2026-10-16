@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { registryCtx } from '../../test/helpers/ctx.mjs';
 import {
   assertCleanSecrets,
   readStdin,
@@ -10,9 +11,10 @@ import {
 const REGISTRY = {
   shared: [],
   api: ['DATABASE_URL', 'LOG_LEVEL'],
-  web: ['TRIPGENCY_API_URL'],
+  web: ['API_URL'],
   admin: [],
 };
+const CTX = registryCtx(REGISTRY);
 
 const ok = () => ({ status: 0, stdout: '', stderr: '' });
 
@@ -30,7 +32,7 @@ function fakeSops({
   return {
     calls,
     decrypt: () => structuredClone(document),
-    runSops: (args) => {
+    runSops: (_ctx, args) => {
       calls.push(args);
       const outcome = result(args);
       if (outcome.status === 0) {
@@ -50,7 +52,7 @@ function fakeSops({
 describe('assertCleanSecrets', () => {
   it('passes when git reports nothing', () => {
     expect(() =>
-      assertCleanSecrets({ runGit: () => ({ status: 0, stdout: '' }) }),
+      assertCleanSecrets(CTX, { runGit: () => ({ status: 0, stdout: '' }) }),
     ).not.toThrow();
   });
 
@@ -60,7 +62,7 @@ describe('assertCleanSecrets', () => {
       stdout: ' M secrets/local.enc.yaml\n',
     });
 
-    expect(() => assertCleanSecrets({ runGit })).toThrow(
+    expect(() => assertCleanSecrets(CTX, { runGit })).toThrow(
       /secrets\/local\.enc\.yaml[\s\S]*git checkout -- secrets\//,
     );
   });
@@ -69,14 +71,16 @@ describe('assertCleanSecrets', () => {
   // than assuming the directory is clean.
   it('fails when git cannot answer', () => {
     expect(() =>
-      assertCleanSecrets({ runGit: () => ({ error: new Error('no git') }) }),
+      assertCleanSecrets(CTX, {
+        runGit: () => ({ error: new Error('no git') }),
+      }),
     ).toThrow(/cannot be relied on/);
   });
 });
 
 describe('readStdin', () => {
   it('refuses a terminal instead of hanging forever', async () => {
-    await expect(readStdin({ isTTY: true })).rejects.toThrow(
+    await expect(readStdin(CTX, { isTTY: true })).rejects.toThrow(
       /Stdin is a terminal/,
     );
   });
@@ -93,7 +97,7 @@ describe('writeCell', () => {
   it('passes exactly the argv sops documents', () => {
     const sops = fakeSops();
 
-    writeCell(target, { ...sops, registry: REGISTRY });
+    writeCell(CTX, target, sops);
 
     expect(sops.calls).toHaveLength(1);
     expect(sops.calls[0][0]).toBe('set');
@@ -104,7 +108,7 @@ describe('writeCell', () => {
   it('reports what it changed', () => {
     const sops = fakeSops();
 
-    expect(writeCell(target, { ...sops, registry: REGISTRY })).toMatchObject({
+    expect(writeCell(CTX, target, sops)).toMatchObject({
       environment: 'local',
       mode: 'set',
       key: 'api.DATABASE_URL',
@@ -116,21 +120,18 @@ describe('writeCell', () => {
   it('refuses an undeclared key without running sops', () => {
     const sops = fakeSops();
 
-    expect(() =>
-      writeCell(
-        { ...target, key: 'INVENTED' },
-        { ...sops, registry: REGISTRY },
-      ),
-    ).toThrow(/not declared for scope "api"/);
+    expect(() => writeCell(CTX, { ...target, key: 'INVENTED' }, sops)).toThrow(
+      /not declared for scope "api"/,
+    );
     expect(sops.calls).toEqual([]);
   });
 
   it('refuses a key filed under the wrong scope without running sops', () => {
     const sops = fakeSops();
 
-    expect(() =>
-      writeCell({ ...target, scope: 'web' }, { ...sops, registry: REGISTRY }),
-    ).toThrow(/declared for "api"/);
+    expect(() => writeCell(CTX, { ...target, scope: 'web' }, sops)).toThrow(
+      /declared for "api"/,
+    );
     expect(sops.calls).toEqual([]);
   });
 
@@ -141,9 +142,7 @@ describe('writeCell', () => {
       initial: { api: { DATABASE_URL: 'old', SMUGGLED: 'x' } },
     });
 
-    expect(() => writeCell(target, { ...sops, registry: REGISTRY })).toThrow(
-      /SMUGGLED/,
-    );
+    expect(() => writeCell(CTX, target, sops)).toThrow(/SMUGGLED/);
     expect(sops.calls).toEqual([]);
   });
 
@@ -154,7 +153,7 @@ describe('writeCell', () => {
       }),
     });
 
-    expect(() => writeCell(target, { ...sops, registry: REGISTRY })).toThrow(
+    expect(() => writeCell(CTX, target, sops)).toThrow(
       /was not found on PATH.*winget/s,
     );
   });
@@ -168,7 +167,7 @@ describe('writeCell', () => {
       }),
     });
 
-    expect(() => writeCell(target, { ...sops, registry: REGISTRY })).toThrow(
+    expect(() => writeCell(CTX, target, sops)).toThrow(
       /exit code 1[\s\S]*no matching creation rules/,
     );
   });
@@ -179,13 +178,13 @@ describe('writeCell', () => {
     const sops = fakeSops();
     const liar = {
       ...sops,
-      runSops: (args) => {
+      runSops: (_ctx, args) => {
         sops.calls.push(args);
         return ok();
       },
     };
 
-    expect(() => writeCell(target, { ...liar, registry: REGISTRY })).toThrow(
+    expect(() => writeCell(CTX, target, liar)).toThrow(
       /did not return what was written/,
     );
   });
@@ -193,10 +192,7 @@ describe('writeCell', () => {
   it('removes a key in unset mode and confirms it is gone', () => {
     const sops = fakeSops();
 
-    const outcome = writeCell(
-      { ...target, mode: 'unset' },
-      { ...sops, registry: REGISTRY },
-    );
+    const outcome = writeCell(CTX, { ...target, mode: 'unset' }, sops);
 
     expect(sops.calls[0]).toEqual([
       'unset',
@@ -215,8 +211,9 @@ describe('writeAcrossEnvironments', () => {
     const sops = fakeSops();
 
     const { applied, failed } = writeAcrossEnvironments(
+      CTX,
       { ...target, environments: ['local', 'staging'] },
-      { ...sops, registry: REGISTRY },
+      sops,
     );
 
     expect(failed).toBeNull();
@@ -240,8 +237,9 @@ describe('writeAcrossEnvironments', () => {
 
     expect(() =>
       writeAcrossEnvironments(
+        CTX,
         { ...target, environments: ['local', 'production'] },
-        { ...sops, decrypt, registry: REGISTRY },
+        { ...sops, decrypt },
       ),
     ).toThrow(/Refusing to write anything[\s\S]*production/);
     expect(sops.calls).toEqual([]);
@@ -250,15 +248,16 @@ describe('writeAcrossEnvironments', () => {
   it('stops at the first failure and says what was already written', () => {
     const sops = fakeSops();
     let writes = 0;
-    const runSops = (args) => {
+    const runSops = (ctx, args) => {
       writes += 1;
       if (writes === 2) return { status: 1, stdout: '', stderr: 'boom' };
-      return sops.runSops(args);
+      return sops.runSops(ctx, args);
     };
 
     const { applied, failed } = writeAcrossEnvironments(
+      CTX,
       { ...target, environments: ['local', 'staging', 'production'] },
-      { ...sops, runSops, registry: REGISTRY },
+      { ...sops, runSops },
     );
 
     expect(applied.map((entry) => entry.environment)).toEqual(['local']);
@@ -274,8 +273,9 @@ describe('writeAcrossEnvironments', () => {
 
     expect(() =>
       writeAcrossEnvironments(
+        CTX,
         { ...target, key: 'INVENTED', environments: ['local'] },
-        { ...sops, decrypt, registry: REGISTRY },
+        { ...sops, decrypt },
       ),
     ).toThrow(/not declared/);
   });

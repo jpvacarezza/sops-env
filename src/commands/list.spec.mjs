@@ -10,8 +10,21 @@ import {
   schemaMarker,
 } from './list.mjs';
 import { buildMatrix } from '../model/matrix.mjs';
-import { APP_SCHEMA_FILES } from '../model/env-contract.mjs';
-import { ENVIRONMENTS } from '../scopes.mjs';
+import {
+  FIXTURE_ROOT,
+  fixtureCtx,
+  registryCtx,
+} from '../../test/helpers/ctx.mjs';
+
+const REGISTRY = {
+  shared: [],
+  api: ['DATABASE_URL', 'LOG_LEVEL'],
+  web: [],
+  admin: [],
+};
+const CTX = registryCtx(REGISTRY);
+// `collect` asks whether the ciphertext file exists, so it needs a root that has one.
+const READ_CTX = registryCtx(REGISTRY, { root: FIXTURE_ROOT });
 
 const CIPHERTEXT = [
   'api:',
@@ -24,8 +37,8 @@ const SENTINEL = 'SENTINEL-MUST-NOT-LEAK';
 
 describe('parseListArgs', () => {
   it('defaults to every environment and no decryption', () => {
-    expect(parseListArgs([])).toEqual({
-      environments: ENVIRONMENTS,
+    expect(parseListArgs(CTX, [])).toEqual({
+      environments: CTX.environments,
       withFingerprints: false,
       asJson: false,
       help: false,
@@ -33,23 +46,23 @@ describe('parseListArgs', () => {
   });
 
   it('reads the flags', () => {
-    const options = parseListArgs(['--fingerprints', '--json']);
+    const options = parseListArgs(CTX, ['--fingerprints', '--json']);
 
     expect(options.withFingerprints).toBe(true);
     expect(options.asJson).toBe(true);
   });
 
   it('narrows to the environments named', () => {
-    expect(parseListArgs(['staging']).environments).toEqual(['staging']);
+    expect(parseListArgs(CTX, ['staging']).environments).toEqual(['staging']);
   });
 
   it('names the valid flags when given an unknown one', () => {
-    expect(() => parseListArgs(['--values'])).toThrow(/--fingerprints/);
+    expect(() => parseListArgs(CTX, ['--values'])).toThrow(/--fingerprints/);
   });
 
   // A typo must not silently widen or narrow the view being read.
   it('names the valid environments when given an unknown one', () => {
-    expect(() => parseListArgs(['prod'])).toThrow(
+    expect(() => parseListArgs(CTX, ['prod'])).toThrow(
       /Unknown environment "prod".*local, staging, production/s,
     );
   });
@@ -115,7 +128,7 @@ describe('collect', () => {
     const decrypt = () => {
       throw new Error('must not be called');
     };
-    const { inventories, meta } = collect(options({ decrypt }));
+    const { inventories, meta } = collect(READ_CTX, options({ decrypt }));
 
     expect(Object.keys(inventories.local.api.keys)).toEqual([
       'DATABASE_URL',
@@ -129,6 +142,7 @@ describe('collect', () => {
   it('keeps decrypted values out of everything it returns but the lookup', () => {
     const decrypt = () => ({ api: { DATABASE_URL: SENTINEL } });
     const { inventories, meta, fingerprints, lookups } = collect(
+      READ_CTX,
       options({ decrypt, withFingerprints: true }),
     );
 
@@ -144,6 +158,7 @@ describe('collect', () => {
       web: { OTHER: 'different' },
     });
     const { fingerprints } = collect(
+      READ_CTX,
       options({ decrypt, withFingerprints: true, salt: Buffer.from('fixed') }),
     );
 
@@ -163,6 +178,7 @@ describe('collect', () => {
       api: { DATABASE_URL: 'REPLACE_ME', LOG_LEVEL: 'info' },
     });
     const { placeholders } = collect(
+      READ_CTX,
       options({ decrypt, withFingerprints: true }),
     );
 
@@ -171,7 +187,7 @@ describe('collect', () => {
   });
 
   it('reports no placeholders when it was not asked to decrypt', () => {
-    expect(collect(options()).placeholders).toEqual({});
+    expect(collect(READ_CTX, options()).placeholders).toEqual({});
   });
 
   // These were one flag, and the grid needed the values for its checks. Asking
@@ -181,6 +197,7 @@ describe('collect', () => {
   it('reads the values without fingerprinting them', () => {
     const decrypt = () => ({ api: { DATABASE_URL: 'REPLACE_ME' } });
     const { fingerprints, lookups, placeholders, meta } = collect(
+      READ_CTX,
       options({ decrypt, withValues: true }),
     );
 
@@ -197,6 +214,7 @@ describe('collect', () => {
       return { api: { DATABASE_URL: 'x' } };
     };
     const { fingerprints } = collect(
+      READ_CTX,
       options({ decrypt, withValues: true, withFingerprints: true }),
     );
 
@@ -211,6 +229,7 @@ describe('collect', () => {
       throw new Error('no identity matched any of the recipients');
     };
     const { inventories, meta, fingerprints, lookups, placeholders } = collect(
+      READ_CTX,
       options({ decrypt, withFingerprints: true }),
     );
 
@@ -225,31 +244,34 @@ describe('collect', () => {
 
 describe('readDeclarations', () => {
   it('covers every app that has a schema', () => {
-    expect(Object.keys(readDeclarations())).toEqual(
-      Object.keys(APP_SCHEMA_FILES),
-    );
+    expect(Object.keys(readDeclarations(fixtureCtx()))).toEqual(['api', 'web']);
   });
 
   it('reads the api schema well enough to tell required from defaulted', () => {
-    const api = readDeclarations().api;
+    const api = readDeclarations(fixtureCtx()).api;
 
     expect(api.DATABASE_URL.presence).toBe('required');
-    expect(api.PORT).toEqual({ presence: 'default', defaultLiteral: '6003' });
+    expect(api.TRUST_PROXY).toEqual({
+      presence: 'default',
+      defaultLiteral: "'false'",
+    });
   });
 });
 
 describe('render', () => {
-  const matrix = buildMatrix({
-    registry: { shared: [], api: ['A_REQ'], web: [], admin: [] },
-    environments: ['local', 'staging'],
-    inventories: {
-      local: { api: { keys: { A_REQ: { line: 2, encrypted: true } } } },
-      staging: { api: { keys: {} } },
+  const matrix = buildMatrix(
+    registryCtx({ shared: [], api: ['A_REQ'], web: [], admin: [] }),
+    {
+      environments: ['local', 'staging'],
+      inventories: {
+        local: { api: { keys: { A_REQ: { line: 2, encrypted: true } } } },
+        staging: { api: { keys: {} } },
+      },
+      declarations: {
+        api: { A_REQ: { presence: 'required', defaultLiteral: null } },
+      },
     },
-    declarations: {
-      api: { A_REQ: { presence: 'required', defaultLiteral: null } },
-    },
-  });
+  );
   const lines = render(matrix, {
     meta: {
       local: {
@@ -286,5 +308,24 @@ describe('render', () => {
 
   it('says a file has no stamp rather than printing null', () => {
     expect(text).not.toContain('null');
+  });
+
+  it('points an empty scope at the config file', () => {
+    expect(text).toContain('(empty on purpose — see secrets.config.mjs)');
+  });
+});
+
+describe('the list model as JSON', () => {
+  it('emits the note in --json rows', () => {
+    const ctx = fixtureCtx();
+    const matrix = buildMatrix(ctx, {
+      environments: ['local'],
+      inventories: {},
+    });
+    const json = JSON.parse(JSON.stringify({ matrix }));
+
+    expect(
+      json.matrix.rows.find((row) => row.key === 'INTERNAL_API_KEY_WEB').note,
+    ).toMatch(/BFF/);
   });
 });

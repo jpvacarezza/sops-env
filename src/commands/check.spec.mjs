@@ -4,12 +4,13 @@ import {
   looksEncrypted,
   strayEntries,
   sweepStrayPlaintext,
-  TRACKED_SECRETS_FILES,
 } from './check.mjs';
-import { ENVIRONMENTS } from '../scopes.mjs';
+import { fixtureCtx } from '../../test/helpers/ctx.mjs';
+
+const CTX = fixtureCtx();
 
 const ENCRYPTED = `shared:
-    TRIPGENCY_INTERNAL_API_KEY: ENC[AES256_GCM,data:abc==,iv:def=,tag:ghi==,type:str]
+    INTERNAL_API_KEY: ENC[AES256_GCM,data:abc==,iv:def=,tag:ghi==,type:str]
 sops:
     age:
         - recipient: age1qqqq
@@ -19,13 +20,13 @@ sops:
 `;
 
 const PLAINTEXT = `shared:
-    TRIPGENCY_INTERNAL_API_KEY: dev-tripgency-internal-api-key-change-me
+    INTERNAL_API_KEY: dev-internal-api-key-change-me
 `;
 
 /** The directory as a clean checkout has it. */
 const CLEAN = [
-  ...ENVIRONMENTS.map((environment) => `${environment}.enc.yaml`),
-  ...TRACKED_SECRETS_FILES,
+  ...CTX.environments.map((environment) => `${environment}.enc.yaml`),
+  ...CTX.store.tracked,
 ];
 
 describe('looksEncrypted', () => {
@@ -64,7 +65,7 @@ describe('assertCiphertext', () => {
 
 describe('strayEntries', () => {
   it('finds nothing in a clean checkout', () => {
-    expect(strayEntries(CLEAN)).toEqual([]);
+    expect(strayEntries(CTX, CLEAN)).toEqual([]);
   });
 
   // One case per sidecar spelling a SOPS editor integration is known to use.
@@ -79,18 +80,18 @@ describe('strayEntries', () => {
     'local.enc.yaml.sops-backup.1',
     'staging.enc.yaml.bak',
   ])('treats %s as a stray', (sidecar) => {
-    expect(strayEntries([...CLEAN, sidecar])).toEqual([sidecar]);
+    expect(strayEntries(CTX, [...CLEAN, sidecar])).toEqual([sidecar]);
   });
 
   it('returns strays sorted, so the message is stable', () => {
-    expect(strayEntries([...CLEAN, 'b.yaml', 'a.yaml'])).toEqual([
+    expect(strayEntries(CTX, [...CLEAN, 'b.yaml', 'a.yaml'])).toEqual([
       'a.yaml',
       'b.yaml',
     ]);
   });
 
   it('counts a ciphertext file for an unknown environment as a stray', () => {
-    expect(strayEntries([...CLEAN, 'preview.enc.yaml'])).toEqual([
+    expect(strayEntries(CTX, [...CLEAN, 'preview.enc.yaml'])).toEqual([
       'preview.enc.yaml',
     ]);
   });
@@ -103,13 +104,13 @@ describe('sweepStrayPlaintext', () => {
 
   it('passes a clean directory', () => {
     expect(
-      sweepStrayPlaintext({ entries: CLEAN, isIgnored: ignoresNothing }),
+      sweepStrayPlaintext(CTX, { entries: CLEAN, isIgnored: ignoresNothing }),
     ).toEqual({ committable: [], ignored: [] });
   });
 
   it('throws when a decrypted sidecar is committable, and names it', () => {
     expect(() =>
-      sweepStrayPlaintext({
+      sweepStrayPlaintext(CTX, {
         entries: [...CLEAN, '.decrypted~production.enc.yaml'],
         isIgnored: ignoresNothing,
       }),
@@ -118,7 +119,7 @@ describe('sweepStrayPlaintext', () => {
 
   it('points at the negation, because a pattern above it does nothing', () => {
     expect(() =>
-      sweepStrayPlaintext({
+      sweepStrayPlaintext(CTX, {
         entries: [...CLEAN, '.decrypted~local.enc.yaml'],
         isIgnored: ignoresNothing,
       }),
@@ -127,7 +128,7 @@ describe('sweepStrayPlaintext', () => {
 
   it('reports an ignored working copy without failing', () => {
     expect(
-      sweepStrayPlaintext({
+      sweepStrayPlaintext(CTX, {
         entries: [...CLEAN, 'local.plain.yaml'],
         isIgnored: ignoresEverything,
       }),
@@ -138,7 +139,7 @@ describe('sweepStrayPlaintext', () => {
   // "git did not answer" as "git said no".
   it('treats a stray git cannot classify as committable', () => {
     expect(() =>
-      sweepStrayPlaintext({
+      sweepStrayPlaintext(CTX, {
         entries: [...CLEAN, 'local.plain.yaml'],
         isIgnored: cannotTell,
       }),
@@ -147,7 +148,7 @@ describe('sweepStrayPlaintext', () => {
 
   it('names only the committable stray, not the ignored one', () => {
     const sweep = () =>
-      sweepStrayPlaintext({
+      sweepStrayPlaintext(CTX, {
         entries: [...CLEAN, 'ignored.yaml', 'exposed.yaml'],
         isIgnored: (entry) => entry === 'ignored.yaml',
       });
@@ -158,24 +159,7 @@ describe('sweepStrayPlaintext', () => {
     expect(sweep).not.toThrow(/ignored\.yaml/);
   });
 
-  // The regression this guards: the sweep used to build its expected set from
-  // the caller's subset, so `secrets:check local` reported staging's and
-  // production's *tracked ciphertext* as committable plaintext.
-  it('does not care which environments the caller asked about', () => {
-    const oneAtATime = () =>
-      sweepStrayPlaintext({
-        entries: CLEAN,
-        isIgnored: () => false,
-        environments: ['local'],
-      });
-
-    expect(oneAtATime).not.toThrow();
-  });
-
-  // Against the real directory and the real .gitignore, the way
-  // trust-proxy-ciphertext.spec.mjs runs against the real ciphertext: a rule
-  // that only holds for fixtures is not a control.
-  it('finds nothing committable in this repository', () => {
-    expect(() => sweepStrayPlaintext()).not.toThrow();
+  it('finds nothing committable in the fixture project', () => {
+    expect(() => sweepStrayPlaintext(fixtureCtx())).not.toThrow();
   });
 });

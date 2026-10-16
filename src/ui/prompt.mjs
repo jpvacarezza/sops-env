@@ -111,7 +111,7 @@ export function readHidden(
       new Error(
         'Cannot mask a value when stdin is not a terminal. Use the ' +
           'non-interactive form instead: pipe the value into ' +
-          '`pnpm secrets:set <environment> <scope> <KEY>`.',
+          '`sops-env set <environment> <scope> <KEY>`.',
       ),
     );
   }

@@ -155,7 +155,7 @@ describe('materializedFindings', () => {
   });
 
   it('is silent for staging and production, which have no file on disk', () => {
-    // They reach their platform through `secrets:sync`. Reporting a missing
+    // They reach their platform through `sops-env sync`. Reporting a missing
     // file there would put two permanent errors in front of every reader until
     // they learned to skip the section.
     for (const environment of ['staging', 'production']) {

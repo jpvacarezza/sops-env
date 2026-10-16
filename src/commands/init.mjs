@@ -1,9 +1,6 @@
 import { existsSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-import { WORKSPACE_ROOT } from '../store/paths.mjs';
-import { ENVIRONMENTS } from '../scopes.mjs';
+import { sopsConfigPath } from '../store/paths.mjs';
 
 /**
  * age public keys are bech32 with an `age1` prefix. Checking the shape here is
@@ -12,18 +9,24 @@ import { ENVIRONMENTS } from '../scopes.mjs';
  */
 const AGE_RECIPIENT_RE = /^age1[02-9ac-hj-np-z]{58}$/;
 
-const USAGE = [
-  'usage: pnpm secrets:init --local <age1...> [--local <age1...>] \\',
-  '                        [--staging <age1...>] [--production <age1...>] [--force]',
-  '',
-  'Writes .sops.yaml (public keys only — safe to commit).',
-  'Generate an identity with: age-keygen -o ~/.config/sops/age/keys.txt',
-].join('\n');
+const usage = (ctx) =>
+  [
+    `usage: sops-env init --${ctx.environments[0]} <age1...> [--${ctx.environments[0]} <age1...>] \\`,
+    `                     ${ctx.environments
+      .slice(1)
+      .map((name) => `[--${name} <age1...>]`)
+      .join(' ')} [--force]`,
+    '',
+    `Writes ${ctx.store.sopsConfig} (public keys only — safe to commit).`,
+    'Generate an identity with: age-keygen -o ~/.config/sops/age/keys.txt',
+  ].join('\n');
 
-export function renderSopsConfig(recipients) {
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+export function renderSopsConfig(ctx, recipients) {
   const rules = [];
 
-  for (const environment of ENVIRONMENTS) {
+  for (const environment of ctx.environments) {
     const keys = recipients[environment];
     if (keys === undefined) continue;
     if (keys.length === 0) {
@@ -43,15 +46,15 @@ export function renderSopsConfig(recipients) {
   }
 
   for (const environment of Object.keys(recipients)) {
-    if (!ENVIRONMENTS.includes(environment)) {
+    if (!ctx.environments.includes(environment)) {
       throw new Error(
-        `Unknown environment "${environment}". Expected one of: ${ENVIRONMENTS.join(', ')}.`,
+        `Unknown environment "${environment}". Expected one of: ${ctx.environments.join(', ')}.`,
       );
     }
   }
 
   if (rules.length === 0) {
-    throw new Error(`No environments given.\n${USAGE}`);
+    throw new Error(`No environments given.\n${usage(ctx)}`);
   }
 
   // `[/\\]` and not `/`: sops matches this regex against the path in the host
@@ -64,7 +67,7 @@ export function renderSopsConfig(recipients) {
     .map(
       ({ environment, keys }) =>
         `  # ${environment}\n` +
-        `  - path_regex: secrets[/\\\\]${environment}\\.enc\\.yaml$\n` +
+        `  - path_regex: ${escapeRegex(ctx.store.dir)}[/\\\\]${escapeRegex(ctx.store.file).replace('<environment>', environment)}$\n` +
         `    age: ${keys.join(',')}`,
     )
     .join('\n');
@@ -72,7 +75,7 @@ export function renderSopsConfig(recipients) {
   return [
     '# Who can decrypt which environment. Public keys only — safe to commit.',
     '# Add a teammate: append their age1... key here, then run',
-    '#   sops updatekeys secrets/<environment>.enc.yaml',
+    `#   sops updatekeys ${ctx.store.dir}/${ctx.store.file}`,
     '# Remove one: delete the key, updatekeys, and rotate every value in that file.',
     '# sops takes the FIRST matching rule, so keep these paths exact and unambiguous.',
     'creation_rules:',
@@ -81,7 +84,7 @@ export function renderSopsConfig(recipients) {
   ].join('\n');
 }
 
-export function parseInitArgs(argv) {
+export function parseInitArgs(ctx, argv) {
   const recipients = {};
   let force = false;
 
@@ -93,17 +96,17 @@ export function parseInitArgs(argv) {
       continue;
     }
     if (!arg.startsWith('--')) {
-      throw new Error(`Unexpected argument "${arg}".\n${USAGE}`);
+      throw new Error(`Unexpected argument "${arg}".\n${usage(ctx)}`);
     }
 
     const environment = arg.slice(2);
-    if (!ENVIRONMENTS.includes(environment)) {
-      throw new Error(`Unknown flag "${arg}".\n${USAGE}`);
+    if (!ctx.environments.includes(environment)) {
+      throw new Error(`Unknown flag "${arg}".\n${usage(ctx)}`);
     }
 
     const value = argv[index + 1];
     if (value === undefined || value.startsWith('--')) {
-      throw new Error(`"${arg}" needs an age public key.\n${USAGE}`);
+      throw new Error(`"${arg}" needs an age public key.\n${usage(ctx)}`);
     }
 
     recipients[environment] ??= [];
@@ -114,27 +117,27 @@ export function parseInitArgs(argv) {
   return { recipients, force };
 }
 
-export function main(argv = process.argv.slice(2)) {
+export function main(ctx, argv) {
   let parsed;
   try {
-    parsed = parseInitArgs(argv);
+    parsed = parseInitArgs(ctx, argv);
   } catch (error) {
     console.error(error.message);
     return 1;
   }
 
-  const target = join(WORKSPACE_ROOT, '.sops.yaml');
+  const target = sopsConfigPath(ctx);
   if (existsSync(target) && !parsed.force) {
     console.error(
-      '.sops.yaml already exists. Edit it by hand to add or remove a recipient ' +
-        '(then `sops updatekeys secrets/<environment>.enc.yaml`), or pass --force to overwrite.',
+      `${ctx.store.sopsConfig} already exists. Edit it by hand to add or remove a recipient ` +
+        `(then \`sops updatekeys ${ctx.store.dir}/${ctx.store.file}\`), or pass --force to overwrite.`,
     );
     return 1;
   }
 
   let content;
   try {
-    content = renderSopsConfig(parsed.recipients);
+    content = renderSopsConfig(ctx, parsed.recipients);
   } catch (error) {
     console.error(error.message);
     return 1;
@@ -142,12 +145,8 @@ export function main(argv = process.argv.slice(2)) {
 
   writeFileSync(target, content);
   console.log(
-    `Wrote .sops.yaml for: ${Object.keys(parsed.recipients).join(', ')}.\n` +
-      'Next: `pnpm secrets:edit local` to create the first encrypted file.',
+    `Wrote ${ctx.store.sopsConfig} for: ${Object.keys(parsed.recipients).join(', ')}.\n` +
+      `Next: \`sops-env edit ${ctx.environments[0]}\` to create the first encrypted file.`,
   );
   return 0;
-}
-
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  process.exit(main());
 }

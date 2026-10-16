@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import { fixtureCtx } from '../../test/helpers/ctx.mjs';
 import { parseInitArgs, renderSopsConfig } from './init.mjs';
+
+const CTX = fixtureCtx();
 
 const DEV = 'age1zvkyg2lqzraa2lnjvqej32nkuu0ues2s82hzrye869xeexvn73equnujwj';
 const CI = 'age1lggyhqrw2nlhcxprm67z43rta597azn8gknawjehu9d9dl0jq3yqqvfafg';
 
 describe('renderSopsConfig', () => {
   it('gives each environment its own rule and recipients', () => {
-    const yaml = renderSopsConfig({
+    const yaml = renderSopsConfig(CTX, {
       local: [DEV],
       staging: [DEV, CI],
       production: [CI],
@@ -23,7 +26,7 @@ describe('renderSopsConfig', () => {
     // `secrets\local.enc.yaml`, finds no rule, and `sops edit` dies with
     // `no matching creation rules found` while `-d`/`set`/`unset` still work.
     const pattern = /path_regex: (\S+)/.exec(
-      renderSopsConfig({ local: [DEV] }),
+      renderSopsConfig(CTX, { local: [DEV] }),
     );
     const rule = new RegExp(pattern[1]);
 
@@ -35,7 +38,7 @@ describe('renderSopsConfig', () => {
   });
 
   it('orders rules from the narrowest environment outward, since sops takes the first match', () => {
-    const yaml = renderSopsConfig({
+    const yaml = renderSopsConfig(CTX, {
       local: [DEV],
       staging: [CI],
       production: [CI],
@@ -48,28 +51,38 @@ describe('renderSopsConfig', () => {
     expect(order.every((index) => index > 0)).toBe(true);
   });
 
+  it('builds the path regex from store.dir and store.file', () => {
+    const ctx = fixtureCtx({
+      store: { dir: 'vault', file: 'env-<environment>.yaml' },
+    });
+
+    expect(renderSopsConfig(ctx, { local: [DEV] })).toContain(
+      'path_regex: vault[/\\\\]env-local\\.yaml$',
+    );
+  });
+
   it('refuses a recipient that is not an age public key', () => {
-    expect(() => renderSopsConfig({ local: ['AGE-SECRET-KEY-1ABC'] })).toThrow(
-      /public key/i,
-    );
-    expect(() => renderSopsConfig({ local: ['ssh-ed25519 AAAA'] })).toThrow(
-      /public key/i,
-    );
+    expect(() =>
+      renderSopsConfig(CTX, { local: ['AGE-SECRET-KEY-1ABC'] }),
+    ).toThrow(/public key/i);
+    expect(() =>
+      renderSopsConfig(CTX, { local: ['ssh-ed25519 AAAA'] }),
+    ).toThrow(/public key/i);
   });
 
   it('refuses an environment with no recipients, which would silently be unencryptable', () => {
-    expect(() => renderSopsConfig({ local: [] })).toThrow(/local/);
+    expect(() => renderSopsConfig(CTX, { local: [] })).toThrow(/local/);
   });
 
   it('refuses an unknown environment', () => {
-    expect(() => renderSopsConfig({ preview: [DEV] })).toThrow(/preview/);
+    expect(() => renderSopsConfig(CTX, { preview: [DEV] })).toThrow(/preview/);
   });
 });
 
 describe('parseInitArgs', () => {
   it('collects repeated flags into per-environment recipient lists', () => {
     expect(
-      parseInitArgs(['--local', DEV, '--local', CI, '--production', CI]),
+      parseInitArgs(CTX, ['--local', DEV, '--local', CI, '--production', CI]),
     ).toEqual({
       recipients: { local: [DEV, CI], production: [CI] },
       force: false,
@@ -77,14 +90,14 @@ describe('parseInitArgs', () => {
   });
 
   it('reads --force', () => {
-    expect(parseInitArgs(['--local', DEV, '--force']).force).toBe(true);
+    expect(parseInitArgs(CTX, ['--local', DEV, '--force']).force).toBe(true);
   });
 
   it('rejects a flag with no value', () => {
-    expect(() => parseInitArgs(['--local'])).toThrow(/--local/);
+    expect(() => parseInitArgs(CTX, ['--local'])).toThrow(/--local/);
   });
 
   it('rejects an unknown flag rather than ignoring it', () => {
-    expect(() => parseInitArgs(['--preview', DEV])).toThrow(/--preview/);
+    expect(() => parseInitArgs(CTX, ['--preview', DEV])).toThrow(/--preview/);
   });
 });
