@@ -1,20 +1,18 @@
 # Changelog
 
-## Unreleased
-
-- `src/ui/shell.mjs` (1871 lines) is split into `shell-layout.mjs`, `shell-state.mjs`
-  and `shell-render.mjs`; `shell.mjs` re-exports the same public names. No
-  behaviour change.
+## v0.2.0 — 2026-10-16
 
 - **Breaking:** requires `sops` >= 3.11.0. `set` now passes the value to
   `sops set --value-stdin`, so it is no longer on the child's argv (the v0.1.0
   known limitation is closed). CI pins sops 3.11.0.
-
 - Specs for `run`, `edit` and `unset`, which had none.
 - Coverage floors raised to lines 75 / functions 80 / branches 76 /
   statements 75 (measured 77.9 / 82.8 / 78.5 / 77.3).
 - CI: Windows job (sops pinned by checksum), tarball contents check, and a tag
   workflow that publishes the CHANGELOG section as the GitHub release notes.
+- `src/ui/shell.mjs` (1871 lines) is split into `shell-layout.mjs`,
+  `shell-state.mjs` and `shell-render.mjs`; `shell.mjs` re-exports the same
+  public names. No behaviour change.
 
 ## v0.1.0 — 2026-10-16
 
