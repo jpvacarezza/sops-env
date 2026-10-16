@@ -1,0 +1,66 @@
+{
+  "name": "sops-env",
+  "version": "0.1.0",
+  "description": "SOPS + age secrets CLI: a scope registry in a config file, projections per app, a navigable grid, Vercel and Railway sync.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jpvacarezza/sops-env.git"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@11.3.0",
+  "bin": {
+    "sops-env": "bin/sops-env.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/config/types.d.ts",
+      "default": "./src/index.mjs"
+    },
+    "./providers": {
+      "default": "./src/providers/index.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "bin",
+    "src",
+    "!src/**/*.spec.mjs",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "tsx": ">=4",
+    "zod": ">=3"
+  },
+  "peerDependenciesMeta": {
+    "tsx": {
+      "optional": true
+    },
+    "zod": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.8.0",
+    "@vitest/coverage-v8": "~4.1.11",
+    "eslint": "^9.8.0",
+    "globals": "^16.0.0",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.12",
+    "typescript": "~6.0.3",
+    "vitest": "~4.1.11",
+    "zod": "^4.4.3"
+  }
+}

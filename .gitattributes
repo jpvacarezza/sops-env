@@ -1,0 +1,3 @@
+* text=auto eol=lf
+test/fixtures/project/secrets/*.enc.yaml text eol=lf
+test/fixtures/age-key.txt text eol=lf

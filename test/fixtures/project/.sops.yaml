@@ -1,0 +1,9 @@
+# Fixture recipients. One key for every environment, committed next to the
+# ciphertext at test/fixtures/age-key.txt: the values are placeholders.
+creation_rules:
+  - path_regex: secrets[/\\]local\.enc\.yaml$
+    age: age1e55x5p7fqdnemxzs0kk9u0j0fqgazrkv4apy960avptrrxxm9q2q9r73wr
+  - path_regex: secrets[/\\]staging\.enc\.yaml$
+    age: age1e55x5p7fqdnemxzs0kk9u0j0fqgazrkv4apy960avptrrxxm9q2q9r73wr
+  - path_regex: secrets[/\\]production\.enc\.yaml$
+    age: age1e55x5p7fqdnemxzs0kk9u0j0fqgazrkv4apy960avptrrxxm9q2q9r73wr
