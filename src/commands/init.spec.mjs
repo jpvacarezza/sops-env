@@ -4,8 +4,8 @@ import { parseInitArgs, renderSopsConfig } from './init.mjs';
 
 const CTX = fixtureCtx();
 
-const DEV = 'age1zvkyg2lqzraa2lnjvqej32nkuu0ues2s82hzrye869xeexvn73equnujwj';
-const CI = 'age1lggyhqrw2nlhcxprm67z43rta597azn8gknawjehu9d9dl0jq3yqqvfafg';
+const DEV = 'age15776z04e5p58wxc4zh0ajze0ghey8q7r9q0eew2wyx48ruw8tspse0qvq2';
+const CI = 'age15s7mf82ftzt5yy9hh7a6p9y4jk0r9jkhl7tpk9ygdfmddrzk85ys3szgca';
 
 describe('renderSopsConfig', () => {
   it('gives each environment its own rule and recipients', () => {
