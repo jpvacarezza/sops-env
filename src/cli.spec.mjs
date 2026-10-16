@@ -188,7 +188,7 @@ describe('the binary', { timeout: 30_000 }, () => {
     if (result.error) throw result.error;
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(
-      /local\/api: 3 keys — DATABASE_URL, LOG_LEVEL, SERVICE_KEY_WEB/,
+      /local\/api: 4 keys — DATABASE_URL, LOG_LEVEL, PROXY_HOPS, SERVICE_KEY_WEB/,
     );
   });
 });
