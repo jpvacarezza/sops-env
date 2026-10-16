@@ -1,0 +1,10 @@
+node_modules
+test-output
+coverage
+# Decrypted working copies next to fixture ciphertext. The negation re-includes
+# the three fixture files, which are ciphertext and committed on purpose.
+test/fixtures/project/secrets/*
+!test/fixtures/project/secrets/*.enc.yaml
+!test/fixtures/project/secrets/README.md
+# `materialize` writes these in the fixture when run by hand (Task 10 verification).
+test/fixtures/project/apps/*/.env.local
