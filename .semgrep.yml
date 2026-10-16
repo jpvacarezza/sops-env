@@ -40,8 +40,15 @@ rules:
       # execSync (which has no common non-shell namesake).
       - pattern-either:
           - pattern: execSync($CMD, ...)
-          - pattern: $CP.execSync($CMD, ...)
-          - pattern: $CP.exec($CMD, ...)
+          # `$CP.exec` would also match RegExp#exec, so the receiver must be a
+          # name a child_process namespace import is given.
+          - patterns:
+              - pattern-either:
+                  - pattern: $CP.execSync($CMD, ...)
+                  - pattern: $CP.exec($CMD, ...)
+              - metavariable-regex:
+                  metavariable: $CP
+                  regex: '^(cp|childProcess|child_process)$'
       - pattern-not: execSync("...", ...)
       - pattern-not: $CP.execSync("...", ...)
       - pattern-not: $CP.exec("...", ...)
