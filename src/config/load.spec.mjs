@@ -1,8 +1,10 @@
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { defineConfig, findConfigFile, loadConfig } from './load.mjs';
 
@@ -55,8 +57,9 @@ describe('loadConfig', () => {
 
   it('names the file and the env var when nothing is found', async () => {
     const empty = scratch();
+    vi.stubEnv('SOPS_ENV_CONFIG', '');
 
-    await expect(loadConfig({ cwd: empty, file: undefined })).rejects.toThrow(
+    await expect(loadConfig({ cwd: empty })).rejects.toThrow(
       /No secrets\.config\.mjs found walking up from .*Set SOPS_ENV_CONFIG/,
     );
   });
@@ -65,6 +68,66 @@ describe('loadConfig', () => {
     await expect(
       loadConfig({ file: join(scratch(), 'nope.mjs') }),
     ).rejects.toThrow(/nope\.mjs does not exist/);
+  });
+
+  it('imports a provider named by relative path and keeps the module unfrozen', async () => {
+    const root = scratch();
+    writeFileSync(
+      join(root, 'secrets.config.mjs'),
+      `export default {
+  scopes: { api: { keys: { DATABASE_URL: null } } },
+  apps: { api: { scopes: ['api'], destination: { provider: './prov.mjs', service: { staging: 'S' } } } },
+};
+`,
+    );
+    writeFileSync(
+      join(root, 'prov.mjs'),
+      `export const name = 'prov';
+export const label = () => 'prov/api';
+export const resolve = () => ({});
+export const upsert = async () => ({});
+`,
+    );
+
+    // A real Node process: vitest wraps modules, so only plain Node yields a
+    // genuine ES module namespace, which Object.freeze rejects.
+    const script = `import { loadConfig } from ${JSON.stringify(
+      pathToFileURL(join(import.meta.dirname, 'load.mjs')).href,
+    )};
+const ctx = await loadConfig({ cwd: ${JSON.stringify(root)} });
+console.log(JSON.stringify([
+  ctx.providers['./prov.mjs'].label(),
+  ctx.app.api.destination.provider,
+  Object.isFrozen(ctx.providers),
+  Object.isFrozen(ctx.providers['./prov.mjs']),
+]));`;
+    const out = execFileSync(
+      process.execPath,
+      ['--input-type=module', '-e', script],
+      { encoding: 'utf8' },
+    );
+
+    expect(JSON.parse(out)).toEqual(['prov/api', './prov.mjs', true, false]);
+  });
+
+  it('does not freeze the config object the user wrote', async () => {
+    const root = scratch();
+    writeFileSync(
+      join(root, 'secrets.config.mjs'),
+      `export const service = { staging: 'S' };
+export default {
+  scopes: { api: { keys: { DATABASE_URL: null } } },
+  apps: { api: { scopes: ['api'], destination: { provider: 'railway', service } } },
+};
+`,
+    );
+
+    await loadConfig({ cwd: root });
+    const loaded = await import(
+      pathToFileURL(join(root, 'secrets.config.mjs')).href
+    );
+
+    expect(Object.isFrozen(loaded.service)).toBe(false);
   });
 
   it('reports a file with no default export', async () => {

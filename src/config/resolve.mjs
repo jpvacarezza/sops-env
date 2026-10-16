@@ -3,9 +3,19 @@ import { relative as nodeRelative } from 'node:path';
 import { APP_DEFAULTS, DEFAULTS } from './defaults.mjs';
 import { validateConfig } from './validate.mjs';
 
-/** Freeze every plain object and array reachable from `value`. Functions and RegExps stay as they are. */
+/**
+ * Freeze every plain object and array reachable from `value`. Functions, RegExps
+ * and ES module namespaces are left alone: a namespace cannot be frozen (it throws),
+ * and a provider module is code, not config. `ctx.providers` itself is frozen, so
+ * the map cannot change; the modules inside it are not touched.
+ */
 export function deepFreeze(value) {
-  if (value === null || typeof value !== 'object' || value instanceof RegExp)
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    value instanceof RegExp ||
+    value[Symbol.toStringTag] === 'Module'
+  )
     return value;
   for (const entry of Object.values(value)) deepFreeze(entry);
   return Object.freeze(value);
@@ -69,9 +79,12 @@ export function resolveConfig(raw, { root, configFile, providers = {} }) {
     apps.map((name) => {
       const entry = raw.apps[name];
       const provider = entry.destination?.provider;
+      // Clone minus `provider` (an inline one holds functions, which do not
+      // structuredClone) so freezing never reaches the user's own objects.
+      const { provider: _provider, ...rest } = entry.destination ?? {};
       const destination = entry.destination
         ? {
-            ...entry.destination,
+            ...structuredClone(rest),
             provider: isObject(provider) ? provider.name : provider,
           }
         : null;
