@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -55,6 +56,8 @@ const defaultResolveFrom = (root, specifier) =>
  * What to spawn for one app, or why nothing can be. `tsx` is resolved from the
  * CONSUMER root: pnpm does not guarantee a peer is visible from this package's
  * own directory. A missing tool is `unavailable`, never a verdict about the store.
+ * A configured schema file that does not exist is `missing`: a typo there would
+ * otherwise disable the gate behind a warning.
  */
 export function runnerCommand(
   ctx,
@@ -66,7 +69,8 @@ export function runnerCommand(
     return {
       unavailable: `apps.${app}.schema is not configured in secrets.config.mjs`,
     };
-  const { exportName } = ctx.app[app].schema;
+  const { exportName, file } = ctx.app[app].schema;
+  if (!existsSync(module)) return { missing: file };
   const cwd =
     ctx.schemaRunner.cwd === 'tmp'
       ? tmpdir()
@@ -107,6 +111,7 @@ export function runnerCommand(
 export function defaultRunValidator(ctx, { app, env }, options = {}) {
   const plan = runnerCommand(ctx, { app }, options);
   if (plan.unavailable) return { unavailable: plan.unavailable };
+  if (plan.missing) return { missing: plan.missing };
   // Somewhere with no .env files by default: a loader that calls dotenv on paths
   // relative to the CWD would otherwise add variables the store does not have.
   return spawnSync(plan.command, plan.args, {
@@ -131,6 +136,11 @@ export function validateProjection(
 
   if (result.unavailable)
     return { state: 'unavailable', message: result.unavailable };
+  if (result.missing)
+    return {
+      state: 'missing',
+      message: `apps.${app}.schema.file ${JSON.stringify(result.missing)} does not exist (relative to the config file)`,
+    };
   if (result.error) {
     return {
       state: 'unavailable',
@@ -163,6 +173,19 @@ export function validateProjection(
 
 export function schemaFindings(environment, app, outcome) {
   if (outcome.state === 'ok') return [];
+
+  if (outcome.state === 'missing') {
+    return [
+      {
+        code: 'schema-missing',
+        severity: 'error',
+        scope: app,
+        key: '(schema)',
+        environment,
+        message: `The ${app} schema cannot be checked against ${environment}: ${outcome.message}. Fix the path in secrets.config.mjs.`,
+      },
+    ];
+  }
 
   if (outcome.state === 'unavailable') {
     return [

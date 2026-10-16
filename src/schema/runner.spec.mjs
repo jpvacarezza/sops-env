@@ -232,6 +232,44 @@ describe('runnerCommand', () => {
     expect(cwd).toBe(ctx.root);
   });
 
+  // A typo in schema.file must not disable the gate as a mere warning.
+  it('reports a configured schema file that does not exist as missing', () => {
+    const ctx = fixtureCtx({
+      apps: {
+        api: {
+          scopes: ['shared', 'api'],
+          schema: { file: 'apps/api/src/evn.ts', exportName: 'parseApiEnv' },
+        },
+        web: { scopes: ['shared', 'web'] },
+      },
+    });
+
+    expect(runnerCommand(ctx, { app: 'api' })).toEqual({
+      missing: 'apps/api/src/evn.ts',
+    });
+
+    const outcome = validateProjection(ctx, {
+      environment: 'production',
+      app: 'api',
+      document: { api: {} },
+    });
+    expect(outcome).toEqual({
+      state: 'missing',
+      message: expect.stringMatching(/apps\/api\/src\/evn\.ts/),
+    });
+
+    const [finding] = schemaFindings('production', 'api', outcome);
+    expect(finding).toMatchObject({
+      code: 'schema-missing',
+      severity: 'error',
+      scope: 'api',
+      environment: 'production',
+    });
+    expect(finding.message).toMatch(
+      /apps\.api\.schema\.file "apps\/api\/src\/evn\.ts" does not exist/,
+    );
+  });
+
   it('is unavailable, not an error, when the app has no schema', () => {
     expect(runnerCommand(registryCtx({ api: [] }), { app: 'api' })).toEqual({
       unavailable: 'apps.api.schema is not configured in secrets.config.mjs',

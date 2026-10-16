@@ -1144,6 +1144,7 @@ const REASONS = {
   'pair-mismatch': () => 'does not match its pair',
   'pair-collision': () => 'shared with the other app',
   'schema-invalid': () => 'its schema rejects it',
+  'schema-missing': () => 'its schema file is missing',
   'schema-unchecked': () => 'could not be checked',
   undecryptable: () => 'values unreadable',
 };
