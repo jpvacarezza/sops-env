@@ -5,6 +5,11 @@ const HEADER = [
   '',
 ].join('\n');
 
+/** Whether `text` opens with the header `formatEnvFile` writes. */
+export function isGeneratedEnvFile(text) {
+  return text.split(/\r?\n/, 1)[0] === HEADER.split('\n', 1)[0];
+}
+
 /**
  * Serialize a projected environment as dotenv text.
  *
