@@ -61,6 +61,17 @@ describe('renderSopsConfig', () => {
     );
   });
 
+  it('matches a nested store.dir under either path separator', () => {
+    const ctx = fixtureCtx({ store: { dir: 'config/secrets' } });
+    const pattern = /path_regex: (\S+)/.exec(
+      renderSopsConfig(ctx, { local: [DEV] }),
+    );
+    const rule = new RegExp(pattern[1]);
+
+    expect(rule.test('config/secrets/local.enc.yaml')).toBe(true);
+    expect(rule.test('config\\secrets\\local.enc.yaml')).toBe(true);
+  });
+
   it('refuses a recipient that is not an age public key', () => {
     expect(() =>
       renderSopsConfig(CTX, { local: ['AGE-SECRET-KEY-1ABC'] }),

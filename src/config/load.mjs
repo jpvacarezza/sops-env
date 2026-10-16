@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 
 import { BUILTIN_PROVIDERS } from '../providers/index.mjs';
 import { resolveConfig } from './resolve.mjs';
+import { providerProblems } from './validate.mjs';
 
 export const CONFIG_FILE_NAME = 'secrets.config.mjs';
 
@@ -64,12 +65,15 @@ export async function loadConfig({
     if (typeof provider === 'string' && /^\.{1,2}\//.test(provider)) {
       const target = resolve(dirname(configFile), provider);
       const module = await import(pathToFileURL(target).href);
-      if (
-        typeof module.label !== 'function' ||
-        typeof module.upsert !== 'function'
-      ) {
+      const problems = providerProblems(
+        typeof module.name === 'string' && module.name !== ''
+          ? `providers.${module.name}`
+          : `providers[${JSON.stringify(provider)}]`,
+        module,
+      );
+      if (problems.length > 0) {
         throw new Error(
-          `apps.${app}.destination.provider: ${provider} does not export label() and upsert()`,
+          `apps.${app}.destination.provider: ${provider}: ${problems.join('; ')}`,
         );
       }
       registered[provider] = module;

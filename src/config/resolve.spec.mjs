@@ -249,3 +249,260 @@ describe('resolveConfig', () => {
     expect(lines.length).toBeGreaterThanOrEqual(3);
   });
 });
+
+const escapeForRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+
+describe('resolveConfig: names-only guard beyond scope notes', () => {
+  const NOT_A_NAME = 'vcp_live_0123456789abcdef';
+
+  it.each([
+    ['vercel', 'token'],
+    ['vercel', 'team'],
+    ['railway', 'token'],
+    ['railway', 'project'],
+  ])(
+    'rejects providers.%s.%s that is not an env-var name',
+    (provider, field) => {
+      const raw = {
+        ...minimal(),
+        providers: { [provider]: { [field]: NOT_A_NAME } },
+      };
+
+      expect(() => resolve(raw)).toThrow(
+        new RegExp(
+          `providers\\.${provider}\\.${field}: not an environment variable name`,
+        ),
+      );
+    },
+  );
+
+  it('rejects a providers.railway.environment entry that is not a name', () => {
+    const raw = {
+      ...minimal(),
+      providers: { railway: { environment: { staging: NOT_A_NAME } } },
+    };
+
+    expect(() => resolve(raw)).toThrow(
+      /providers\.railway\.environment\.staging: not an environment variable name/,
+    );
+  });
+
+  it('never echoes the rejected string', () => {
+    const raw = { ...minimal(), providers: { vercel: { token: NOT_A_NAME } } };
+
+    let message = '';
+    try {
+      resolve(raw);
+    } catch (error) {
+      message = error.message;
+    }
+    expect(message).toMatch(/providers\.vercel\.token/);
+    expect(message).not.toContain(NOT_A_NAME);
+  });
+
+  it('rejects a destination project or service entry that is not a name', () => {
+    const raw = minimal();
+    raw.scopes.web = { keys: {} };
+    raw.apps.web = {
+      scopes: ['web'],
+      destination: { provider: 'vercel', project: 'prj_abc123' },
+    };
+    raw.apps.api.destination = {
+      provider: 'railway',
+      service: { staging: 'S', production: 'svc-1234' },
+    };
+
+    expect(() => resolve(raw)).toThrow(
+      /apps\.web\.destination\.project: not an environment variable name/,
+    );
+    expect(() => resolve(raw)).toThrow(
+      /apps\.api\.destination\.service\.production: not an environment variable name/,
+    );
+  });
+
+  it('runs the note guard over pair name and why', () => {
+    const raw = minimal();
+    raw.scopes.api.keys.OTHER = null;
+    raw.pairs = [
+      {
+        name: 'AGE-SECRET-KEY-1XYZ',
+        left: { scope: 'api', key: 'DATABASE_URL' },
+        right: { scope: 'api', key: 'OTHER' },
+        relation: 'equal',
+        why: 'TOKEN=abc',
+      },
+    ];
+
+    expect(() => resolve(raw)).toThrow(
+      /pairs\[0\]\.name: looks like a key or a value/,
+    );
+    expect(() => resolve(raw)).toThrow(/pairs\[0\]\.why: contains "="/);
+  });
+
+  it.each(['unparsedBySchema', 'platformProvided', 'derived'])(
+    'runs the note guard over exemptions.%s reasons',
+    (group) => {
+      const raw = {
+        ...minimal(),
+        exemptions: { [group]: { CI: 'ENC[AES256_GCM,data:x]' } },
+      };
+
+      expect(() => resolve(raw)).toThrow(
+        new RegExp(`exemptions\\.${group}\\.CI: looks like a key or a value`),
+      );
+    },
+  );
+});
+
+describe('resolveConfig: provider shape', () => {
+  it.each(['label', 'resolve', 'upsert'])(
+    'rejects an inline provider whose %s is not a function',
+    (field) => {
+      const custom = {
+        name: 'fly',
+        label: () => 'fly/api',
+        resolve: () => ({}),
+        upsert: async () => ({}),
+        [field]: 'nope',
+      };
+      const raw = minimal();
+      raw.apps.api.destination = { provider: custom };
+
+      expect(() => resolve(raw)).toThrow(
+        new RegExp(`providers\\.fly\\.${field} is not a function`),
+      );
+    },
+  );
+});
+
+describe('resolveConfig: providerConfig', () => {
+  it('merges a partial override over the builtin defaults, one level deep', () => {
+    const ctx = resolve({
+      ...minimal(),
+      providers: {
+        vercel: { token: 'MY_TOKEN' },
+        railway: { environment: { staging: 'MY_RAILWAY_STAGING' } },
+      },
+    });
+
+    expect(ctx.providerConfig.vercel).toEqual({
+      token: 'MY_TOKEN',
+      team: 'VERCEL_ORG_ID',
+      targets: { staging: ['preview'], production: ['production'] },
+    });
+    expect(ctx.providerConfig.vercel.targets.staging).toEqual(['preview']);
+    expect(ctx.providerConfig.railway.environment).toEqual({
+      staging: 'MY_RAILWAY_STAGING',
+      production: 'RAILWAY_ENVIRONMENT_ID_PRODUCTION',
+    });
+    expect(ctx.providerConfig.railway.token).toBe('RAILWAY_TOKEN');
+  });
+
+  it.each([
+    [{ vercel: 'VERCEL_TOKEN' }, /providers\.vercel: must be an object/],
+    [
+      { vercel: { targets: { staging: 'preview' } } },
+      /providers\.vercel\.targets\.staging: must be an array of strings/,
+    ],
+    [{ vercel: { token: 42 } }, /providers\.vercel\.token: must be a string/],
+    [
+      { fly: { app: 7 } },
+      /providers\.fly\.app: must be a string, an array of strings, or an object of those/,
+    ],
+  ])('rejects a malformed providers block %j', (providers, message) => {
+    expect(() => resolve({ ...minimal(), providers })).toThrow(message);
+  });
+});
+
+describe('resolveConfig: builtin providers by default', () => {
+  it('resolves vercel and railway with no providers option', () => {
+    const raw = minimal();
+    raw.scopes.web = { keys: {} };
+    raw.apps.web = {
+      scopes: ['web'],
+      destination: { provider: 'vercel', project: 'VERCEL_PROJECT_ID_WEB' },
+    };
+    raw.apps.api.destination = {
+      provider: 'railway',
+      service: { staging: 'S', production: 'P' },
+    };
+
+    const ctx = resolve(raw);
+
+    expect(Object.keys(ctx.providers)).toEqual(['vercel', 'railway']);
+    expect(ctx.providers.vercel.label(ctx, { app: 'web' })).toBe('vercel/web');
+  });
+
+  it('rejects an unknown provider with no providers option', () => {
+    const raw = minimal();
+    raw.apps.api.destination = { provider: 'heroku' };
+
+    expect(() => resolve(raw)).toThrow(
+      /"heroku" is not a known provider \(known: vercel, railway\)/,
+    );
+  });
+});
+
+describe('resolveConfig: store and environment names', () => {
+  it.each([
+    ['nested/<environment>.enc.yaml', /store\.file: .*path separator/],
+    ['nested\\<environment>.enc.yaml', /store\.file: .*path separator/],
+    ['..<environment>.enc.yaml', /store\.file: .*"\.\."/],
+    [
+      '<environment>-<environment>.enc.yaml',
+      /store\.file: .*exactly one <environment>/,
+    ],
+  ])('rejects store.file %j', (file, message) => {
+    expect(() => resolve({ ...minimal(), store: { file } })).toThrow(message);
+  });
+
+  it.each(['../secrets', '/abs/secrets', ''])('rejects store.dir %j', (dir) => {
+    expect(() => resolve({ ...minimal(), store: { dir } })).toThrow(
+      /store\.dir: /,
+    );
+  });
+
+  it.each(['Local', 'pre_prod', '1st', 'a/b'])(
+    'rejects the environment name %j',
+    (name) => {
+      const raw = {
+        ...minimal(),
+        environments: { [name]: { nodeEnv: 'development', sync: false } },
+      };
+
+      expect(() => resolve(raw)).toThrow(
+        new RegExp(`environments\\.${escapeForRegExp(name)}: name must match`),
+      );
+    },
+  );
+
+  it('accepts a lowercase, dashed environment name', () => {
+    const raw = {
+      ...minimal(),
+      environments: { 'pre-prod': { nodeEnv: 'production', sync: true } },
+    };
+
+    expect(resolve(raw).environments).toEqual(['pre-prod']);
+  });
+});
+
+describe('resolveConfig: dotenv stays under root', () => {
+  it.each(['../outside/.env.local', '/elsewhere/.env.local'])(
+    'rejects apps.api.dotenv %j',
+    (dotenv) => {
+      const raw = minimal();
+      raw.apps.api.dotenv = dotenv;
+
+      expect(() => resolve(raw)).toThrow(
+        /apps\.api\.dotenv: resolves outside the config root/,
+      );
+    },
+  );
+
+  it('accepts a dotenv under root', () => {
+    const raw = minimal();
+    raw.apps.api.dotenv = 'services/api/.env';
+
+    expect(resolve(raw).app.api.dotenv).toBe('services/api/.env');
+  });
+});

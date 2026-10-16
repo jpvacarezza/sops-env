@@ -1,5 +1,6 @@
 import { relative as nodeRelative } from 'node:path';
 
+import { BUILTIN_PROVIDERS } from '../providers/index.mjs';
 import { APP_DEFAULTS, DEFAULTS } from './defaults.mjs';
 import { validateConfig } from './validate.mjs';
 
@@ -25,15 +26,42 @@ const isObject = (value) =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
 /**
+ * Each provider's block over its default, and each map inside it (`targets`,
+ * `environment`) over the default map, so `vercel: { token: 'MY_TOKEN' }` keeps
+ * `targets.staging === ['preview']`.
+ */
+function mergeProviderConfig(overrides) {
+  const names = new Set([
+    ...Object.keys(DEFAULTS.providers),
+    ...Object.keys(overrides),
+  ]);
+  return Object.fromEntries(
+    [...names].map((name) => {
+      const base = DEFAULTS.providers[name] ?? {};
+      const override = overrides[name] ?? {};
+      const merged = { ...base, ...override };
+      for (const [field, value] of Object.entries(override)) {
+        if (isObject(value) && isObject(base[field]))
+          merged[field] = { ...base[field], ...value };
+      }
+      return [name, structuredClone(merged)];
+    }),
+  );
+}
+
+/**
  * Pure: raw config in, frozen `ctx` out. Throws one error listing every problem.
  *
- * `providers` is the module map (`{ name: Provider }`). `loadConfig` passes the
- * builtins plus whatever the config imported by path; a test passes what it needs.
+ * `providers` is the module map (`{ name: Provider }`), the builtins by default.
+ * `loadConfig` passes the builtins plus whatever the config imported by path.
  * An inline provider object in a destination is registered under its `name` and
  * the destination is rewritten to that name, so downstream code only ever sees a
  * string and one map.
  */
-export function resolveConfig(raw, { root, configFile, providers = {} }) {
+export function resolveConfig(
+  raw,
+  { root, configFile, providers = BUILTIN_PROVIDERS },
+) {
   const registered = { ...providers };
   if (isObject(raw?.apps)) {
     for (const entry of Object.values(raw.apps)) {
@@ -45,6 +73,7 @@ export function resolveConfig(raw, { root, configFile, providers = {} }) {
 
   const problems = validateConfig(raw, {
     providers: Object.keys(registered).length > 0 ? registered : null,
+    root: typeof root === 'string' ? root : null,
   });
   if (problems.length > 0) {
     throw new Error(
@@ -138,10 +167,7 @@ export function resolveConfig(raw, { root, configFile, providers = {} }) {
       extraFiles: [...contract.extraFiles],
       ignore: [...contract.ignore],
     },
-    providerConfig: structuredClone({
-      ...DEFAULTS.providers,
-      ...(raw.providers ?? {}),
-    }),
+    providerConfig: mergeProviderConfig(raw.providers ?? {}),
     providers: registered,
     root,
     configFile,

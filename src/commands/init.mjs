@@ -63,11 +63,14 @@ export function renderSopsConfig(ctx, recipients) {
   // surfaces as `no matching creation rules found` on `sops edit` — while
   // `sops -d`, `set` and `unset` keep working, because those read the recipients
   // from the file's own metadata and never consult creation_rules at all.
+  // The same holds inside a nested `store.dir` (`config/secrets`).
+  const separator = '[/\\\\]';
+  const dir = ctx.store.dir.split(/[/\\]/).map(escapeRegex).join(separator);
   const body = rules
     .map(
       ({ environment, keys }) =>
         `  # ${environment}\n` +
-        `  - path_regex: ${escapeRegex(ctx.store.dir)}[/\\\\]${escapeRegex(ctx.store.file).replace('<environment>', environment)}$\n` +
+        `  - path_regex: ${dir}${separator}${escapeRegex(ctx.store.file).replace('<environment>', environment)}$\n` +
         `    age: ${keys.join(',')}`,
     )
     .join('\n');

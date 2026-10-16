@@ -110,6 +110,37 @@ console.log(JSON.stringify([
     expect(JSON.parse(out)).toEqual(['prov/api', './prov.mjs', true, false]);
   });
 
+  it.each([
+    ['resolve', /providers\.prov\.resolve is not a function/],
+    ['name', /providers\["\.\/prov\.mjs"\]\.name must be a string/],
+  ])(
+    'rejects a provider module by path that does not export %s',
+    async (missing, message) => {
+      const root = scratch();
+      writeFileSync(
+        join(root, 'secrets.config.mjs'),
+        `export default {
+  scopes: { api: { keys: { DATABASE_URL: null } } },
+  apps: { api: { scopes: ['api'], destination: { provider: './prov.mjs', service: { staging: 'S' } } } },
+};
+`,
+      );
+      const exports = {
+        name: `export const name = 'prov';`,
+        label: `export const label = () => 'prov/api';`,
+        resolve: `export const resolve = () => ({});`,
+        upsert: `export const upsert = async () => ({});`,
+      };
+      delete exports[missing];
+      writeFileSync(
+        join(root, 'prov.mjs'),
+        `${Object.values(exports).join('\n')}\n`,
+      );
+
+      await expect(loadConfig({ cwd: root })).rejects.toThrow(message);
+    },
+  );
+
   it('rejects an unknown provider name against the builtin registry', async () => {
     const root = scratch();
     writeFileSync(
