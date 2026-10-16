@@ -313,7 +313,7 @@ describe('offerSync', () => {
     const status = await offerSync(
       CTX,
       { environments: ['local', 'staging', 'production'], scope: 'api' },
-      { runSync, input: answering('y\n') },
+      { runSync, input: answering('y\n'), output: new PassThrough() },
     );
 
     expect(status).toBe(0);
@@ -333,7 +333,7 @@ describe('offerSync', () => {
     const status = await offerSync(
       CTX,
       { environments: ['staging', 'production'], scope: 'shared' },
-      { runSync, input: answering('y\n') },
+      { runSync, input: answering('y\n'), output: new PassThrough() },
     );
 
     expect(status).toBe(1);
@@ -349,7 +349,7 @@ describe('offerSync', () => {
     const status = await offerSync(
       CTX,
       { environments: ['staging', 'production'], scope: 'api' },
-      { runSync, input: answering('n\n') },
+      { runSync, input: answering('n\n'), output: new PassThrough() },
     );
 
     expect(status).toBe(0);

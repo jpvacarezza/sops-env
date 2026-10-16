@@ -273,7 +273,11 @@ const defaultRunSync = (ctx, args) => syncMain(ctx, args);
 export async function offerSync(
   ctx,
   { environments, scope },
-  { runSync = defaultRunSync, input = process.stdin } = {},
+  {
+    runSync = defaultRunSync,
+    input = process.stdin,
+    output = process.stdout,
+  } = {},
 ) {
   const targets = environments.filter((name) => ctx.syncable.includes(name));
   if (targets.length === 0) return 0;
@@ -299,7 +303,7 @@ export async function offerSync(
   }
 
   const confirmed = parseConfirm(
-    await ask('\nRun the real sync now? (y/N) > ', { input }),
+    await ask('\nRun the real sync now? (y/N) > ', { input, output }),
   );
   if (!confirmed) {
     console.log('Not synced. The ciphertext is written either way.');

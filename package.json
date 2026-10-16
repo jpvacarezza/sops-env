@@ -8,9 +8,13 @@
     "type": "git",
     "url": "git+https://github.com/jpvacarezza/sops-env.git"
   },
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "packageManager": "pnpm@11.3.0",
-  "bin": { "sops-env": "bin/sops-env.mjs" },
+  "bin": {
+    "sops-env": "bin/sops-env.mjs"
+  },
   "exports": {
     ".": "./src/index.mjs",
     "./providers": "./src/providers/index.mjs",
@@ -31,10 +35,17 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {},
-  "peerDependencies": { "tsx": ">=4", "zod": ">=3" },
+  "peerDependencies": {
+    "tsx": ">=4",
+    "zod": ">=3"
+  },
   "peerDependenciesMeta": {
-    "tsx": { "optional": true },
-    "zod": { "optional": true }
+    "tsx": {
+      "optional": true
+    },
+    "zod": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@eslint/js": "^9.8.0",

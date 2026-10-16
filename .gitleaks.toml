@@ -1,0 +1,12 @@
+# sops-env — extends the default ruleset. The one allowed finding is the fixture
+# age identity at test/fixtures/age-key.txt: it decrypts placeholder values in
+# test/fixtures/project/secrets/*.enc.yaml and nothing else. Nothing else in the
+# tree may hold a key or a ciphertext blob outside that directory.
+title = "sops-env"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Fixture age identity; decrypts test placeholders only."
+paths = ['''test/fixtures/age-key\.txt''']

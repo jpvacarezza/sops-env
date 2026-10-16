@@ -13,7 +13,7 @@ describe('providerFor / destinationFor', () => {
     expect(providerFor(ctx, 'web')).toBe(BUILTIN_PROVIDERS.vercel);
   });
 
-  it('labels byte for byte as tripgency printed them', () => {
+  it('labels byte for byte as the original in-repo tool printed them', () => {
     expect(destinationFor(ctx, 'api')).toBe('railway/api');
     expect(destinationFor(ctx, 'web')).toBe('vercel/web');
   });

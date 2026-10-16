@@ -8,7 +8,6 @@ import {
   CELL_ACTIONS,
   CELL_NOTICE,
   CELL_STATUS,
-  cellTone,
   colorSupport,
   columnWidths,
   COLUMN_GAP,
@@ -2157,6 +2156,7 @@ describe('renderShell', () => {
     const painted = renderShell(opened, { columns: 140, colors: true });
     const joined = painted.join('\n');
     const bar = painted.find((line) => line.includes('┌'));
+    // eslint-disable-next-line no-control-regex
     const box = bar.replace(/\x1b\[[0-9;]*m/g, '').match(/┌─+┐/)[0];
     const longest = Math.max(
       ...opened.rows.map((row) => `${row.scope}.${row.key}`.length),

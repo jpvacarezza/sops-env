@@ -15,7 +15,7 @@ const resolve = (raw, options = {}) =>
   resolveConfig(raw, { root: ROOT, configFile: FILE, ...options });
 
 describe('resolveConfig', () => {
-  it('fills tripgency-equal defaults and derives the lists', () => {
+  it('fills the original defaults and derives the lists', () => {
     const ctx = resolve(minimal());
 
     expect(ctx.environments).toEqual(['local', 'staging', 'production']);

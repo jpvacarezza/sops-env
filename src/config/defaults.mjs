@@ -1,5 +1,5 @@
 /**
- * What a consumer gets without saying so. Equal to tripgency on the day of the
+ * What a consumer gets without saying so. Equal to the original in-repo tool on the day of the
  * extraction, except where the spec says otherwise: no pairs, no exemptions,
  * no schema, no destination, no `--conditions`, and `apps/*\/src` alone as the
  * contract's source roots.
