@@ -16,8 +16,13 @@
     "sops-env": "bin/sops-env.mjs"
   },
   "exports": {
-    ".": "./src/index.mjs",
-    "./providers": "./src/providers/index.mjs",
+    ".": {
+      "types": "./src/config/types.d.ts",
+      "default": "./src/index.mjs"
+    },
+    "./providers": {
+      "default": "./src/providers/index.mjs"
+    },
     "./package.json": "./package.json"
   },
   "files": [
