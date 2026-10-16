@@ -198,6 +198,8 @@ SOPS_AGE_KEY_FILE=../age-key.txt node ../../../bin/sops-env.mjs list
 
 The fixture age key is committed on purpose; it protects nothing.
 
+Behavior-changing PRs are verified before and after against that fixture; see [docs/verification.md](docs/verification.md). Design decisions are in [docs/adr/](docs/adr/README.md).
+
 ## Origin and license
 
 Extracted from tripgency's in-repo secrets tooling; MIT.
