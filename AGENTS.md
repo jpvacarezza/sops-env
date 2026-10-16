@@ -12,8 +12,8 @@ pnpm lint               # eslint .
 pnpm format:check       # prettier --check . (covers Markdown); `pnpm format` writes
 ```
 
-Node >= 24, pnpm 11. Try the CLI on the fixture project: `pnpm try list`
-(any command and args pass through to `bin/sops-env.mjs`).
+Node >= 24, pnpm 11. Try the CLI on the fixture project: `pnpm try` opens the grid,
+`pnpm try list` (or any command and args) passes through to `bin/sops-env.mjs`.
 
 ## Architecture (`src/`)
 

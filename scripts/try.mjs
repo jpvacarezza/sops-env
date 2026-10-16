@@ -1,4 +1,5 @@
-// Runs the local CLI against test/fixtures/project: `pnpm try <command> [args]`.
+// Runs the local CLI against test/fixtures/project: `pnpm try [command] [args]`;
+// no command opens the grid.
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -7,7 +8,7 @@ const fixtures = new URL('../test/fixtures/', import.meta.url);
 
 const { status } = spawnSync(
   process.execPath,
-  [bin, ...(process.argv.length > 2 ? process.argv.slice(2) : ['list'])],
+  [bin, ...process.argv.slice(2)],
   {
     cwd: fileURLToPath(new URL('project/', fixtures)),
     env: {
