@@ -72,7 +72,7 @@ describe('placeholderFindings', () => {
   // local holds placeholders on purpose, so calling that
   // an error would train everyone to ignore the command.
   it('is only a warning in local', () => {
-    const [finding] = placeholderFindings('local', [
+    const [finding] = placeholderFindings(CTX, 'local', [
       { scope: 'api', key: 'DATABASE_URL' },
     ]);
 
@@ -82,7 +82,7 @@ describe('placeholderFindings', () => {
 
   it('is an error in staging and production, and names the checklist', () => {
     for (const environment of ['staging', 'production']) {
-      const [finding] = placeholderFindings(environment, [
+      const [finding] = placeholderFindings(CTX, environment, [
         { scope: 'api', key: 'DATABASE_URL' },
       ]);
 

@@ -68,14 +68,17 @@ export function buildMatrix(
 
     // An app scope with no platform to deploy to — `ingest` until slice 1b —
     // has no `staging` or `production` to be missing a required key FROM.
-    // Restricting the finding to `local` is what keeps `missing-required`
+    // Restricting the finding to the environments that never sync (`local` by
+    // default) is what keeps `missing-required`
     // meaning "the app cannot boot", not "an environment nothing ever
     // populates is empty". `shared` is exempt from this: it is not in `APPS`,
     // so it always keeps the full environment list, because it merges into
     // apps that ARE deployable.
     const scopeEnvironments =
       ctx.apps.includes(scope) && !ctx.deployableApps.includes(scope)
-        ? environments.filter((environment) => environment === 'local')
+        ? environments.filter(
+            (environment) => !ctx.syncable.includes(environment),
+          )
         : environments;
 
     // Rows are the union of the registry and whatever the files hold, so a key

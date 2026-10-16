@@ -91,7 +91,7 @@ export function load(ctx, { environments, withFingerprints }) {
       ...pairFindings(environment, checkPairs(ctx, lookup)),
       // A `REPLACE_ME` in production is set, encrypted, and not a value. Without
       // this the row would be green, which is the one thing green must not say.
-      ...placeholderFindings(environment, placeholders[environment] ?? []),
+      ...placeholderFindings(ctx, environment, placeholders[environment] ?? []),
     );
   }
   matrix.counts = countBySeverity(matrix.findings);

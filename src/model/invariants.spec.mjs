@@ -85,8 +85,10 @@ describe('findPlaceholders', () => {
 
 describe('placeholderFindings', () => {
   it('does not name consumer files', () => {
-    const [local] = placeholderFindings('local', [{ scope: 'api', key: 'A' }]);
-    const [staging] = placeholderFindings('staging', [
+    const [local] = placeholderFindings(CTX, 'local', [
+      { scope: 'api', key: 'A' },
+    ]);
+    const [staging] = placeholderFindings(CTX, 'staging', [
       { scope: 'api', key: 'A' },
     ]);
 

@@ -47,7 +47,8 @@ export function storeKeysForApp(ctx, app, inventory) {
 /**
  * Findings for one environment's materialized files.
  *
- * Only `local` has any: staging and production reach their platform through
+ * Only an environment that never syncs (`sync: false`, `local` by default) has
+ * any: the others reach their platform through
  * `sops-env sync`, so no file is expected on disk and its absence is the normal
  * state rather than drift. Saying otherwise would put two permanent errors in
  * front of every reader until they learned to ignore the whole section.
@@ -63,7 +64,7 @@ export function materializedFindings(
     readFile = readFileSync,
   },
 ) {
-  if (environment !== 'local') return [];
+  if (ctx.syncable.includes(environment)) return [];
 
   const findings = [];
 

@@ -83,7 +83,7 @@ export function auditEnvironments(
     }
 
     findings.push(
-      ...placeholderFindings(environment, findPlaceholders(ctx, document)),
+      ...placeholderFindings(ctx, environment, findPlaceholders(ctx, document)),
     );
     findings.push(
       ...pairFindings(
@@ -99,9 +99,12 @@ export function auditEnvironments(
       // has no `staging` or `production` for its schema to fail against;
       // spawning the validator there anyway is the same drift
       // `buildMatrix`'s deployable check already keeps out of
-      // `missing-required` (matrix.mjs). `local` is real for every app, so it
-      // is always validated.
-      if (environment !== 'local' && !ctx.deployableApps.includes(app))
+      // `missing-required` (matrix.mjs). An environment that never syncs
+      // (`local` by default) is real for every app, so it is always validated.
+      if (
+        ctx.syncable.includes(environment) &&
+        !ctx.deployableApps.includes(app)
+      )
         continue;
 
       findings.push(

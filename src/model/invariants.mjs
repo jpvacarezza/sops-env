@@ -77,16 +77,21 @@ export function findPlaceholders(ctx, document) {
     );
 }
 
-export function placeholderFindings(environment, placeholders) {
+/**
+ * A placeholder is deliberate in an environment that never syncs (`sync:
+ * false`, `local` by default) and an error everywhere else.
+ */
+export function placeholderFindings(ctx, environment, placeholders) {
+  const laptop = !ctx.syncable.includes(environment);
   return placeholders.map(({ scope, key }) => ({
     code: 'placeholder',
-    severity: environment === 'local' ? 'warn' : 'error',
+    severity: laptop ? 'warn' : 'error',
     scope,
     key,
     environment,
     message:
       `${scope}.${key} in ${environment} still holds a placeholder. ` +
-      (environment === 'local'
+      (laptop
         ? 'Local placeholders are deliberate, so this is a note.'
         : 'Replace it before this environment is synced.'),
   }));
