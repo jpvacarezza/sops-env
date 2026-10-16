@@ -74,6 +74,41 @@ describe('main', () => {
     );
   });
 
+  describe('a command that throws', () => {
+    const boom = {
+      boom: {
+        main: async () => {
+          throw new Error('projectEnv: invalid document');
+        },
+        summary: 'throws',
+      },
+    };
+    const run = async (options) => {
+      const io = capture();
+      const code = await main(['boom'], {
+        ...io,
+        commands: boom,
+        loadConfig: async () => ({}),
+        ...options,
+      });
+      return { code, err: io.err.join('') };
+    };
+
+    it('exits 1 with the message and no stack trace', async () => {
+      const { code, err } = await run({ env: {} });
+
+      expect(code).toBe(1);
+      expect(err).toBe('projectEnv: invalid document\n');
+    });
+
+    it('prints the stack when SOPS_ENV_DEBUG is set', async () => {
+      const { code, err } = await run({ env: { SOPS_ENV_DEBUG: '1' } });
+
+      expect(code).toBe(1);
+      expect(err).toMatch(/projectEnv: invalid document\n\s+at /);
+    });
+  });
+
   // Review Focus 5.
   it('exits 1 with the config error, no stack trace, when no config is found', async () => {
     const io = capture();

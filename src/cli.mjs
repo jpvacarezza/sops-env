@@ -82,6 +82,7 @@ export async function main(
     cwd = process.cwd(),
     stdout = process.stdout,
     stderr = process.stderr,
+    env = process.env,
   } = {},
 ) {
   let global;
@@ -109,7 +110,7 @@ export async function main(
   try {
     ctx = await loadConfig({
       cwd,
-      file: global.config ?? process.env.SOPS_ENV_CONFIG,
+      file: global.config ?? env.SOPS_ENV_CONFIG,
     });
   } catch (error) {
     stderr.write(`${error.message}\n`);
@@ -124,6 +125,13 @@ export async function main(
       ctx,
       global.help ? [...global.rest, '--help'] : global.rest,
     );
+  } catch (error) {
+    // A command that throws (an invalid document, a write that failed) ends
+    // as one line and exit 1, not a stack trace; SOPS_ENV_DEBUG shows the stack.
+    stderr.write(
+      `${env.SOPS_ENV_DEBUG ? (error?.stack ?? String(error)) : (error?.message ?? String(error))}\n`,
+    );
+    return 1;
   } finally {
     restore();
   }
