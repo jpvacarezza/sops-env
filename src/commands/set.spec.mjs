@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { PassThrough } from 'node:stream';
+
+import { describe, expect, it, vi } from 'vitest';
 
 import { registryCtx } from '../../test/helpers/ctx.mjs';
 import {
   assertCleanSecrets,
+  offerSync,
   readStdin,
   writeAcrossEnvironments,
   writeCell,
@@ -278,5 +281,78 @@ describe('writeAcrossEnvironments', () => {
         { ...sops, decrypt },
       ),
     ).toThrow(/not declared/);
+  });
+});
+
+describe('offerSync', () => {
+  const answering = (text) => {
+    const input = new PassThrough();
+    input.isTTY = true;
+    input.end(text);
+    return input;
+  };
+  const recorder = (status) => {
+    const calls = [];
+    return {
+      calls,
+      runSync: async (ctx, argv) => {
+        calls.push({ ctx, argv });
+        return status;
+      },
+    };
+  };
+  const quiet = () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  };
+
+  it('dry-runs then syncs each syncable environment, and returns 0', async () => {
+    quiet();
+    const { calls, runSync } = recorder(0);
+
+    const status = await offerSync(
+      CTX,
+      { environments: ['local', 'staging', 'production'], scope: 'api' },
+      { runSync, input: answering('y\n') },
+    );
+
+    expect(status).toBe(0);
+    expect(calls.every((call) => call.ctx === CTX)).toBe(true);
+    expect(calls.map((call) => call.argv)).toEqual([
+      ['staging', 'api', '--dry-run'],
+      ['production', 'api', '--dry-run'],
+      ['staging', 'api'],
+      ['production', 'api'],
+    ]);
+  });
+
+  it('propagates a failing sync as a non-zero status and stops', async () => {
+    quiet();
+    const { calls, runSync } = recorder(1);
+
+    const status = await offerSync(
+      CTX,
+      { environments: ['staging', 'production'], scope: 'shared' },
+      { runSync, input: answering('y\n') },
+    );
+
+    expect(status).toBe(1);
+    expect(calls.map((call) => call.argv)).toEqual([
+      ['staging', 'all', '--dry-run'],
+    ]);
+  });
+
+  it('runs no real sync when the answer is no', async () => {
+    quiet();
+    const { calls, runSync } = recorder(0);
+
+    const status = await offerSync(
+      CTX,
+      { environments: ['staging', 'production'], scope: 'api' },
+      { runSync, input: answering('n\n') },
+    );
+
+    expect(status).toBe(0);
+    expect(calls.every((call) => call.argv.includes('--dry-run'))).toBe(true);
   });
 });

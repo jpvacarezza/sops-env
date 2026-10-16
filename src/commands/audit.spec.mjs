@@ -309,7 +309,7 @@ describe('auditEnvironments', () => {
       throw new Error('no identity matched any of the recipients');
     };
     const { findings, errors } = auditEnvironments(fixtureCtx(), {
-      environments: ['production'],
+      environments: ['staging'],
       withSchema: false,
       decrypt,
     });
@@ -331,7 +331,7 @@ describe('auditEnvironments', () => {
     const decrypt = () => structuredClone(fixtureClean);
 
     auditEnvironments(fixtureCtx(), {
-      environments: ['production'],
+      environments: ['staging'],
       withSchema: false,
       decrypt,
       runValidator,
@@ -339,7 +339,7 @@ describe('auditEnvironments', () => {
     expect(calls).toEqual([]);
 
     auditEnvironments(fixtureCtx(), {
-      environments: ['production'],
+      environments: ['staging'],
       withSchema: true,
       decrypt,
       runValidator,
@@ -351,8 +351,7 @@ describe('auditEnvironments', () => {
   // destination has no platform in `production`, so spawning its validator there
   // would only report "the projection is empty" — a fact about the store having
   // no platform to fill it from, not about the app's configuration. `local` is
-  // real for every app, so it is always validated there. The fixture ships a
-  // `local` and a `production` file, so those are the two environments walked.
+  // real for every app, so it is always validated there.
   it('validates an app with no destination for local only, and a deployable one for every environment', () => {
     const ctx = registryCtx(
       {
@@ -364,7 +363,7 @@ describe('auditEnvironments', () => {
       { nonDeployable: ['ingest'], root: FIXTURE_ROOT },
     );
 
-    for (const environment of ['local', 'production']) {
+    for (const environment of ['local', 'staging', 'production']) {
       const calls = [];
       const runValidator = (_ctx, options) => {
         calls.push(options.app);

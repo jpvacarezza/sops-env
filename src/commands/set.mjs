@@ -20,7 +20,7 @@
 import { spawnSync } from 'node:child_process';
 
 import { decryptSecretsFile, INSTALL_HINT } from '../store/decrypt.mjs';
-import { secretsFilePath, storeDir } from '../store/paths.mjs';
+import { secretsFilePath } from '../store/paths.mjs';
 import { assertValidDocument } from '../store/project.mjs';
 import { ask, parseConfirm } from '../ui/prompt.mjs';
 import { main as syncMain } from './sync.mjs';
@@ -299,7 +299,7 @@ export async function offerSync(
   }
 
   const confirmed = parseConfirm(
-    await ask('\nRun the real sync now? (y/N) > '),
+    await ask('\nRun the real sync now? (y/N) > ', { input }),
   );
   if (!confirmed) {
     console.log('Not synced. The ciphertext is written either way.');
