@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Breaking:** requires `sops` >= 3.11.0. `set` now passes the value to
+  `sops set --value-stdin`, so it is no longer on the child's argv (the v0.1.0
+  known limitation is closed). CI pins sops 3.11.0.
+
 - Specs for `run`, `edit` and `unset`, which had none.
 - Coverage floors raised to lines 75 / functions 80 / branches 76 /
   statements 75 (measured 77.9 / 82.8 / 78.5 / 77.3).

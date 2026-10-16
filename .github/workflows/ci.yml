@@ -29,10 +29,10 @@ jobs:
       # Pin sops to the version the code is measured against.
       - name: Install sops
         env:
-          SOPS_VERSION: '3.9.4'
-          # The sops-v3.9.4.linux.amd64 line of
-          # https://github.com/getsops/sops/releases/download/v3.9.4/sops-v3.9.4.checksums.txt
-          SOPS_SHA256: '5488e32bc471de7982ad895dd054bbab3ab91c417a118426134551e9626e4e85'
+          SOPS_VERSION: '3.11.0'
+          # The sops-v3.11.0.linux.amd64 line of
+          # https://github.com/getsops/sops/releases/download/v3.11.0/sops-v3.11.0.checksums.txt
+          SOPS_SHA256: '775f1384d55decfad228e7196a3f683791914f92a473f78fc47700531c29dfef'
         run: |
           set -euo pipefail
           binary="${RUNNER_TEMP}/sops"
@@ -98,14 +98,14 @@ jobs:
       - name: Install sops
         shell: bash
         env:
-          SOPS_VERSION: '3.9.4'
-          # The sops-v3.9.4.exe line of the release checksums file.
-          SOPS_SHA256: 'bee270926fc55b5b89ed9ce87fb2569a36c74e99d63e6392090b3d0f0c2775eb'
+          SOPS_VERSION: '3.11.0'
+          # The sops-v3.11.0.amd64.exe line of the release checksums file.
+          SOPS_SHA256: 'f3d74d83006954f0d8cf770ad7e5380504270ded5a62f33eb2548ce5461af3b3'
         run: |
           set -euo pipefail
           dir="${RUNNER_TEMP}/sops-bin"
           mkdir -p "${dir}"
-          curl -fsSL "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.exe" -o "${dir}/sops.exe"
+          curl -fsSL "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.amd64.exe" -o "${dir}/sops.exe"
           echo "${SOPS_SHA256}  ${dir}/sops.exe" | sha256sum -c -
           echo "${dir}" >> "${GITHUB_PATH}"
 

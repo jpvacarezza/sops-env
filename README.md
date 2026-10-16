@@ -8,7 +8,7 @@ SOPS + age secrets for a monorepo. A config file is the registry of which variab
 pnpm add -D github:jpvacarezza/sops-env#v0.1.0
 ```
 
-Not published on npm. Requires Node >= 24 and `sops` >= 3.9.4 with an age key on the machine. `tsx` and `zod` are optional peers: `tsx` runs the Zod schema pass of `audit` (see [Schema validation](#schema-validation)).
+Not published on npm. Requires Node >= 24 and `sops` >= 3.11.0 with an age key on the machine. `tsx` and `zod` are optional peers: `tsx` runs the Zod schema pass of `audit` (see [Schema validation](#schema-validation)).
 
 ## Versioning
 
@@ -178,7 +178,7 @@ A destination names a provider: `destination: { provider: 'vercel' | 'railway' |
 - Values leave a process only as fingerprints or behind a closure; `list`, `check`, `audit` and dry-run print names.
 - Presence is read from ciphertext without an age key.
 - Fingerprints are HMAC with a per-run random salt, eight hex chars.
-- A value is never an argument to `sops-env`: stdin or a masked prompt. It reaches `sops set` on the child's argv for the child's lifetime (sops 3.9 has no stdin mode).
+- A value is never an argument to `sops-env`: stdin or a masked prompt. It reaches `sops set` on the child's stdin (`--value-stdin`).
 - A platform error is printed with every synced value replaced by `<redacted>`, capped at 500 characters.
 - `set` and `unset` write per cell: three changed lines per edit.
 - No runtime dependencies, pinned by a test.
