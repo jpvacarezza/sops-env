@@ -32,7 +32,7 @@ export function main(ctx, argv) {
   if (result.error?.code === 'ENOENT') {
     console.error(
       '`sops` was not found on PATH. Install it with `brew install sops` (macOS), ' +
-        '`winget install SecretsOPerationS.SOPS --version 3.9.4 --source winget` ' +
+        '`winget install SecretsOPerationS.SOPS --version 3.11.0 --source winget` ' +
         '(Windows — reopen the terminal afterwards, PATH changes do not reach open ' +
         'shells), or from https://github.com/getsops/sops/releases.',
     );

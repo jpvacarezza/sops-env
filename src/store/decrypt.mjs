@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 // than as a missing file.
 export const INSTALL_HINT =
   'Install it with `brew install sops` (macOS), ' +
-  '`winget install SecretsOPerationS.SOPS --version 3.9.4 --source winget` (Windows), ' +
+  '`winget install SecretsOPerationS.SOPS --version 3.11.0 --source winget` (Windows), ' +
   'or from https://github.com/getsops/sops/releases, then make sure your age identity ' +
   'is at $SOPS_AGE_KEY_FILE (default ~/.config/sops/age/keys.txt, or ' +
   '%APPDATA%\\sops\\age\\keys.txt on Windows).';

@@ -30,22 +30,25 @@ function fakeSops({
   result = ok,
 } = {}) {
   const calls = [];
+  const inputs = [];
   let document = initial;
 
   return {
     calls,
     decrypt: () => structuredClone(document),
-    runSops: (_ctx, args) => {
+    inputs,
+    runSops: (_ctx, args, input) => {
       calls.push(args);
+      inputs.push(input);
       const outcome = result(args);
       if (outcome.status === 0) {
-        // By pattern, not position: `set` is [set, file, index, value] and
-        // `unset` is [unset, --idempotent, file, index].
+        // By pattern, not position: `set` is [set, --value-stdin, file, index]
+        // and `unset` is [unset, --idempotent, file, index].
         const index = args.find((arg) => arg.startsWith('["'));
         const [, scope, key] = index.match(/\["(\w+)"\]\["(\w+)"\]/);
         document = { ...document, [scope]: { ...(document[scope] ?? {}) } };
         if (args[0] === 'unset') delete document[scope][key];
-        else document[scope][key] = JSON.parse(args[args.length - 1]);
+        else document[scope][key] = JSON.parse(input);
       }
       return outcome;
     },
@@ -97,15 +100,20 @@ describe('writeCell', () => {
     value: 'new',
   };
 
-  it('passes exactly the argv sops documents', () => {
+  it('passes the index on argv and the value on stdin, never on argv', () => {
     const sops = fakeSops();
 
     writeCell(CTX, target, sops);
 
     expect(sops.calls).toHaveLength(1);
-    expect(sops.calls[0][0]).toBe('set');
-    expect(sops.calls[0][2]).toBe('["api"]["DATABASE_URL"]');
-    expect(sops.calls[0][3]).toBe('"new"');
+    expect(sops.calls[0]).toEqual([
+      'set',
+      '--value-stdin',
+      expect.stringContaining('local.enc.yaml'),
+      '["api"]["DATABASE_URL"]',
+    ]);
+    expect(sops.inputs[0]).toBe('"new"');
+    expect(sops.calls[0].join(' ')).not.toContain('new');
   });
 
   it('reports what it changed', () => {
@@ -251,10 +259,10 @@ describe('writeAcrossEnvironments', () => {
   it('stops at the first failure and says what was already written', () => {
     const sops = fakeSops();
     let writes = 0;
-    const runSops = (ctx, args) => {
+    const runSops = (ctx, args, input) => {
       writes += 1;
       if (writes === 2) return { status: 1, stdout: '', stderr: 'boom' };
-      return sops.runSops(ctx, args);
+      return sops.runSops(ctx, args, input);
     };
 
     const { applied, failed } = writeAcrossEnvironments(

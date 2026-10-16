@@ -9,7 +9,7 @@
  * approval criterion for this directory: three changed lines per edit — the key,
  * `lastmodified`, `mac` — and any fourth line is a real change to a value.
  *
- * Measured on sops 3.9.4: `sops set` of a different value touches exactly 3
+ * Measured on sops 3.9.4 (the stdin value needs >= 3.11.0): `sops set` of a different value touches exactly 3
  * lines and leaves the other 18 ENC[ blobs byte-identical, because sops reuses a
  * value's IV within one process when the plaintext is unchanged.
  *
@@ -29,13 +29,14 @@ import {
   normalizeStdin,
   parseSetArgs,
   setArgs,
+  setInput,
   setUsage,
   unsetArgs,
   unsetUsage,
 } from '../model/set-plan.mjs';
 
-const defaultRunSops = (ctx, args) =>
-  spawnSync('sops', args, { encoding: 'utf8', cwd: ctx.root });
+const defaultRunSops = (ctx, args, input) =>
+  spawnSync('sops', args, { encoding: 'utf8', cwd: ctx.root, input });
 
 const defaultRunGit = (ctx, args) =>
   spawnSync('git', args, { encoding: 'utf8', cwd: ctx.root });
@@ -122,10 +123,12 @@ export function writeCell(
   assertValidDocument(ctx, next);
 
   const args =
-    mode === 'unset'
-      ? unsetArgs(file, scope, key)
-      : setArgs(file, scope, key, value);
-  const result = runSops(ctx, args);
+    mode === 'unset' ? unsetArgs(file, scope, key) : setArgs(file, scope, key);
+  const result = runSops(
+    ctx,
+    args,
+    mode === 'unset' ? undefined : setInput(value),
+  );
 
   if (result.error) {
     if (result.error.code === 'ENOENT') {
@@ -137,7 +140,11 @@ export function writeCell(
   if (result.status !== 0) {
     throw new Error(
       `\`sops ${args[0]} ${shown}\` failed with exit code ${result.status}.\n` +
-        `${(result.stderr || '').trim()}`,
+        `${(result.stderr || '').trim()}` +
+        (/value-stdin/.test(result.stderr || '')
+          ? `
+sops >= 3.11.0 is required. ${INSTALL_HINT}`
+          : ''),
     );
   }
 

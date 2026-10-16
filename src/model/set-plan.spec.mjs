@@ -5,6 +5,7 @@ import {
   normalizeStdin,
   parseSetArgs,
   setArgs,
+  setInput,
   sopsIndex,
   unsetArgs,
 } from './set-plan.mjs';
@@ -105,17 +106,17 @@ describe('sopsIndex', () => {
 });
 
 describe('setArgs', () => {
-  it('is argv, not a shell string', () => {
-    expect(
-      setArgs('secrets/local.enc.yaml', 'web', 'LOG_LEVEL', 'debug'),
-    ).toEqual([
+  it('is argv, not a shell string, and carries no value', () => {
+    expect(setArgs('secrets/local.enc.yaml', 'web', 'LOG_LEVEL')).toEqual([
       'set',
+      '--value-stdin',
       'secrets/local.enc.yaml',
       '["web"]["LOG_LEVEL"]',
-      '"debug"',
     ]);
   });
+});
 
+describe('setInput', () => {
   // JSON.stringify is the only correct encoder here: a hand-rolled '"' + v + '"'
   // breaks on every one of these.
   it.each([
@@ -128,16 +129,14 @@ describe('setArgs', () => {
     ['a percent variable', '%APPDATA%'],
     ['a shell metacharacter salad', 'a^b&c|d$e`f'],
   ])('JSON-encodes %s so it round-trips', (_label, value) => {
-    const [, , , encoded] = setArgs('f', 'api', 'K', value);
-
-    expect(JSON.parse(encoded)).toBe(value);
+    expect(JSON.parse(setInput(value))).toBe(value);
   });
 
   // A bare number writes type:int, which assertValidDocument rejects — but only
   // at the next check --decrypt or sync, long after the write looked fine.
   it('always writes a string, never a number or a boolean', () => {
-    expect(JSON.parse(setArgs('f', 'api', 'PORT', 6003)[3])).toBe('6003');
-    expect(JSON.parse(setArgs('f', 'api', 'FLAG', true)[3])).toBe('true');
+    expect(JSON.parse(setInput(6003))).toBe('6003');
+    expect(JSON.parse(setInput(true))).toBe('true');
   });
 });
 

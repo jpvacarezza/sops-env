@@ -21,8 +21,8 @@ export const setUsage = (
 
 The value is read from stdin and is never an argument to sops-env: on Windows
 any process running as you can read another process's command line, and argv
-lands in your shell history either way. It does reach \`sops set\` on the
-child's argv for the child's lifetime (sops 3.9 has no stdin mode).
+lands in your shell history either way. It reaches \`sops set\` only on that
+child's stdin (\`--value-stdin\`, sops >= 3.11.0).
 
   printf '%s' "$NEW" | sops-env set staging api BETTER_AUTH_URL_ADMIN
   sops-env unset local api VENDOR_DATA_DIR`;
@@ -127,20 +127,23 @@ export function sopsIndex(scope, key) {
 }
 
 /**
- * argv for a write. Never a shell string.
- *
- * Two things are load-bearing. The value is JSON-encoded because that is what
- * `sops set` documents, and it is coerced to a string first: `JSON.stringify(6003)`
- * writes `type:int`, which `assertValidDocument` then rejects — but only at the
- * next `check --decrypt` or `sync`, long after the write looked fine.
- *
- * And this is an array, so no shell is involved. The PowerShell quoting hazard
- * `secrets/README.md` documents is a shell problem: measured through
- * `spawnSync(exe, [args])` on Windows, twelve hostile values — embedded quotes,
- * backslashes, newlines, a leading dash, `%VAR%` — all arrive byte-identical.
+ * argv for a write. Never a shell string, and never the value: that goes to
+ * `sops set --value-stdin` through `setInput`, so it is not in any process listing.
+ * No shell is involved either, which is what avoids the PowerShell quoting hazard
+ * `secrets/README.md` documents.
  */
-export function setArgs(file, scope, key, value) {
-  return ['set', file, sopsIndex(scope, key), JSON.stringify(String(value))];
+export function setArgs(file, scope, key) {
+  return ['set', '--value-stdin', file, sopsIndex(scope, key)];
+}
+
+/**
+ * The stdin for `setArgs`. JSON-encoded because that is what `sops set` expects,
+ * and coerced to a string first: `JSON.stringify(6003)` writes `type:int`, which
+ * `assertValidDocument` then rejects — but only at the next `check --decrypt` or
+ * `sync`, long after the write looked fine.
+ */
+export function setInput(value) {
+  return JSON.stringify(String(value));
 }
 
 /** argv for a removal. `--idempotent` so a key already gone is not an error. */
