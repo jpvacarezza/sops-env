@@ -1,3 +1,4 @@
+import { redact } from './redact.mjs';
 import { required } from './vercel.mjs';
 
 const RAILWAY_API = 'https://backboard.railway.com/graphql/v2';
@@ -79,18 +80,22 @@ export async function upsert(
     }),
   });
 
+  // A GraphQL coercion error quotes the input object back, values included.
+  const secrets = [...Object.values(env), token];
+
   if (!response.ok) {
-    const detail =
+    const body =
       typeof response.text === 'function' ? await response.text() : '';
     throw new Error(
-      `Railway variable upsert failed (HTTP ${response.status}).\n${detail}`,
+      `Railway variable upsert failed (HTTP ${response.status}).\n${redact(body, secrets)}`,
     );
   }
 
   const payload = await response.json();
   if (payload.errors?.length) {
+    const messages = payload.errors.map((error) => error.message).join('; ');
     throw new Error(
-      `Railway variable upsert failed: ${payload.errors.map((error) => error.message).join('; ')}`,
+      `Railway variable upsert failed: ${redact(messages, secrets)}`,
     );
   }
 

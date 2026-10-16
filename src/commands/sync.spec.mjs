@@ -237,3 +237,110 @@ describe('railway.upsert', () => {
     ).rejects.toThrow(/Not Authorized/);
   });
 });
+
+describe('a failed upsert never echoes a value', () => {
+  const SECRET = 'postgresql://user:hunter2-very-secret@db.internal/app';
+  const QUOTED = 'line one\n"quoted" two';
+  const env = { DATABASE_URL: SECRET, NOTE: QUOTED, SHORT: 'abc' };
+  const keys = Object.keys(env);
+
+  const messageOf = async (promise) => {
+    try {
+      await promise;
+    } catch (error) {
+      return error.message;
+    }
+    throw new Error('expected a rejection');
+  };
+
+  const echoingBody = `{"error":{"message":"Invalid value ${SECRET} and ${JSON.stringify(QUOTED).slice(1, -1)}"}}${'x'.repeat(2000)}`;
+
+  it('redacts env values from a Vercel error body and caps its length', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: false,
+      status: 400,
+      text: async () => echoingBody,
+    }));
+
+    const message = await messageOf(
+      vercel.upsert(
+        { token: 'tok', projectId: 'prj', targets: ['preview'] },
+        { env, keys, ctx: CTX },
+        { fetchImpl },
+      ),
+    );
+
+    expect(message).toMatch(/400/);
+    expect(message).toContain('<redacted>');
+    expect(message).not.toContain(SECRET);
+    expect(message).not.toContain('hunter2');
+    expect(message).not.toContain('quoted\\" two');
+    expect(message.length).toBeLessThan(700);
+  });
+
+  it('redacts env values from a Railway HTTP error body', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: false,
+      status: 500,
+      text: async () => echoingBody,
+    }));
+
+    const message = await messageOf(
+      railway.upsert(
+        { token: 'tok', projectId: 'p', environmentId: 'e', serviceId: 's' },
+        { env, keys, ctx: CTX },
+        { fetchImpl },
+      ),
+    );
+
+    expect(message).toContain('<redacted>');
+    expect(message).not.toContain(SECRET);
+    expect(message.length).toBeLessThan(700);
+  });
+
+  it('redacts env values from Railway GraphQL coercion errors', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        errors: [
+          {
+            message: `Variable "$input" got invalid value { DATABASE_URL: "${SECRET}" }`,
+          },
+        ],
+      }),
+    }));
+
+    const message = await messageOf(
+      railway.upsert(
+        { token: 'tok', projectId: 'p', environmentId: 'e', serviceId: 's' },
+        { env, keys, ctx: CTX },
+        { fetchImpl },
+      ),
+    );
+
+    expect(message).toContain('Variable "$input" got invalid value');
+    expect(message).not.toContain(SECRET);
+  });
+});
+
+describe('required', () => {
+  it('names a missing variable that is a name', () => {
+    expect(() => vercel.required({}, 'VERCEL_TOKEN')).toThrow(
+      /Missing VERCEL_TOKEN\. Set it in the environment/,
+    );
+  });
+
+  it('never echoes a configured string that is not a name', () => {
+    const notAName = 'vcp_live_0123456789abcdef';
+    let message = '';
+    try {
+      vercel.required({ [notAName]: 'x' }, notAName);
+    } catch (error) {
+      message = error.message;
+    }
+
+    expect(message).toMatch(/not an environment variable name/);
+    expect(message).not.toContain(notAName);
+  });
+});

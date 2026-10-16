@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { fixtureCtx, registryCtx } from '../../test/helpers/ctx.mjs';
@@ -159,5 +162,20 @@ describe('railway.resolve', () => {
     expect(() =>
       railway.resolve(ctx, { app: 'api', environment: 'local', env: base }),
     ).toThrow(/apps\.api\.destination\.service has no entry for "local"/);
+  });
+});
+
+describe('import direction', () => {
+  // config/resolve.mjs imports BUILTIN_PROVIDERS; an import back into config
+  // would be a cycle.
+  it('no provider module imports from config/', () => {
+    const dir = import.meta.dirname;
+    const offenders = readdirSync(dir)
+      .filter((file) => file.endsWith('.mjs') && !file.endsWith('.spec.mjs'))
+      .filter((file) =>
+        /from ['"]\.\.\/config\//.test(readFileSync(join(dir, file), 'utf8')),
+      );
+
+    expect(offenders).toEqual([]);
   });
 });

@@ -2,6 +2,11 @@
  * Vercel: `/v10/projects/:id/env?upsert=true`, so a second sync updates values
  * instead of failing with ENV_CONFLICT. Values never appear in the summary.
  */
+import { redact } from './redact.mjs';
+
+/** An env-var name. Duplicated from config/validate.mjs: providers import nothing from config. */
+const ENV_NAME = /^[A-Z][A-Z0-9_]*$/;
+
 export const name = 'vercel';
 
 export const label = (_ctx, { app }) => `vercel/${app}`;
@@ -61,8 +66,9 @@ export async function upsert(
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    const detail =
+    const body =
       typeof response.text === 'function' ? await response.text() : '';
+    const detail = redact(body, [...Object.values(env), token]);
     throw new Error(
       `Vercel env upsert failed (${response.status}) for project ${projectId}.\n${detail}`,
     );
@@ -74,6 +80,14 @@ export function required(env, variable) {
   if (typeof variable !== 'string' || variable === '') {
     throw new Error(
       'A provider needs the NAME of an environment variable in secrets.config.mjs, and got none.',
+    );
+  }
+  // A string that is not a name may be the value itself pasted into the
+  // config; the loader refuses it, and this never repeats it either.
+  if (!ENV_NAME.test(variable)) {
+    throw new Error(
+      'A provider setting in secrets.config.mjs is not an environment variable name (UPPER_SNAKE_CASE); ' +
+        'it is not shown, in case it is a value. Put the NAME of the variable there, not its value.',
     );
   }
   const value = env[variable];
