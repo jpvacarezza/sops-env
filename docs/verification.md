@@ -20,7 +20,13 @@ SOPS_ENV="node $PWD/../../../bin/sops-env.mjs"
 ```
 
 `sops` must be on `PATH`. `materialize` writes `apps/*/.env.local` in the
-fixture; they are gitignored. Delete them when done.
+fixture; they are gitignored. `list --json local` reports `not-materialized`
+errors only while those files are absent, so start every capture from a clean
+state or the diff shows a difference the PR did not cause:
+
+```sh
+rm -f apps/*/.env.local   # before each capture, and again when done
+```
 
 ## Capture on `main`
 
