@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Specs for `run`, `edit` and `unset`, which had none.
+- Coverage floors raised to lines 75 / functions 80 / branches 76 /
+  statements 75 (measured 77.9 / 82.8 / 78.5 / 77.3).
+- CI: Windows job (sops pinned by checksum), tarball contents check, and a tag
+  workflow that publishes the CHANGELOG section as the GitHub release notes.
+
 ## v0.1.0 — 2026-10-16
 
 First release. Extracted from tripgency's `tools/secrets/` with history.
