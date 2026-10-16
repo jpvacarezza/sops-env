@@ -120,3 +120,11 @@ jobs:
 
       - name: Audit all dependencies
         run: pnpm audit --audit-level=high
+
+      # Pinned (1.179.0, published > 2 weeks before pinning) and run against the
+      # rules copied into .semgrep.yml; no registry pack is fetched at scan time.
+      - name: Install semgrep
+        run: pip install --user semgrep==1.179.0
+
+      - name: Static analysis (semgrep)
+        run: ~/.local/bin/semgrep scan --config .semgrep.yml --error --metrics=off --disable-version-check .
