@@ -4,7 +4,7 @@
  * SOPS encrypts values and leaves mapping keys in plaintext, so presence — which
  * variable exists under which scope, in which environment — is answerable with
  * no age key at all. `trust-proxy-ciphertext.spec.mjs` already relies on this to
- * gate `TRUST_PROXY` in CI, where no key exists; this generalises the same trick
+ * gate `PROXY_HOPS` in CI, where no key exists; this generalises the same trick
  * from one key to the whole document.
  *
  * A line scanner rather than a YAML parser, deliberately. The shape is fixed and
@@ -126,7 +126,7 @@ export function readEnvironment(ctx, file, { readFile = readFileSync } = {}) {
 /**
  * Whether `key` is declared with a ciphertext value anywhere in the document.
  * Key names are plaintext in a SOPS file, so this runs with no age key — a
- * consumer's CI can gate "staging declares TRUST_PROXY" without decrypting.
+ * consumer's CI can gate "staging declares PROXY_HOPS" without decrypting.
  */
 export function declaresEncryptedKey(text, key) {
   return new RegExp(`^\\s+${key}:\\s+ENC\\[`, 'm').test(text);

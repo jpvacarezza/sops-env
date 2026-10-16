@@ -23,7 +23,7 @@ const API_STORE = inventory({
     'DATABASE_URL',
     'BETTER_AUTH_URL',
     'BETTER_AUTH_URL_ADMIN',
-    'SENTRY_DSN',
+    'MONITORING_DSN',
   ],
 });
 
@@ -32,7 +32,7 @@ const DECLARATIONS = {
     DATABASE_URL: { presence: 'required' },
     BETTER_AUTH_URL: { presence: 'required' },
     BETTER_AUTH_URL_ADMIN: { presence: 'required' },
-    SENTRY_DSN: { presence: 'optional' },
+    MONITORING_DSN: { presence: 'optional' },
   },
 };
 
@@ -78,7 +78,7 @@ describe('materializedFindings', () => {
       [
         'DATABASE_URL="postgresql://user:pw@127.0.0.1:5432/db"',
         'BETTER_AUTH_URL="http://localhost:6001"',
-        'SENTRY_DSN=""',
+        'MONITORING_DSN=""',
       ].join('\n'),
     );
 
@@ -105,7 +105,7 @@ describe('materializedFindings', () => {
     expect(findings[0]).toMatchObject({
       code: 'drifted-materialized',
       severity: 'warn',
-      key: 'SENTRY_DSN',
+      key: 'MONITORING_DSN',
     });
   });
 
@@ -117,7 +117,7 @@ describe('materializedFindings', () => {
         'DATABASE_URL="postgresql://user:pw@127.0.0.1:5432/db"',
         'BETTER_AUTH_URL="http://localhost:6001"',
         'BETTER_AUTH_URL_ADMIN="http://localhost:6002"',
-        'SENTRY_DSN=""',
+        'MONITORING_DSN=""',
         'TRAVEL_BUDDY_API_KEY="retired"',
       ].join('\n'),
     );
@@ -137,7 +137,7 @@ describe('materializedFindings', () => {
           'DATABASE_URL="postgresql://user:pw@127.0.0.1:5432/db"',
           'BETTER_AUTH_URL="http://localhost:6001"',
           'BETTER_AUTH_URL_ADMIN="http://localhost:6002"',
-          'SENTRY_DSN=""',
+          'MONITORING_DSN=""',
         ].join('\n'),
       ),
     ).toEqual([]);

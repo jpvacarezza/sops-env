@@ -56,14 +56,14 @@ describe('appEnvFilePath', () => {
 describe('decryptSecretsFile', () => {
   const okRun = () => ({
     status: 0,
-    stdout: JSON.stringify({ shared: { INTERNAL_API_KEY: 'x' } }),
+    stdout: JSON.stringify({ shared: { SERVICE_KEY: 'x' } }),
     stderr: '',
   });
 
   it('returns the parsed document', () => {
     expect(
       decryptSecretsFile('secrets/local.enc.yaml', { runSops: okRun }),
-    ).toEqual({ shared: { INTERNAL_API_KEY: 'x' } });
+    ).toEqual({ shared: { SERVICE_KEY: 'x' } });
   });
 
   it('explains how to install sops when the binary is missing', () => {

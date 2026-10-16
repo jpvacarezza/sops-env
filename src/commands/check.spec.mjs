@@ -10,7 +10,7 @@ import { fixtureCtx } from '../../test/helpers/ctx.mjs';
 const CTX = fixtureCtx();
 
 const ENCRYPTED = `shared:
-    INTERNAL_API_KEY: ENC[AES256_GCM,data:abc==,iv:def=,tag:ghi==,type:str]
+    SERVICE_KEY: ENC[AES256_GCM,data:abc==,iv:def=,tag:ghi==,type:str]
 sops:
     age:
         - recipient: age1qqqq
@@ -20,7 +20,7 @@ sops:
 `;
 
 const PLAINTEXT = `shared:
-    INTERNAL_API_KEY: dev-internal-api-key-change-me
+    SERVICE_KEY: dev-internal-api-key-change-me
 `;
 
 /** The directory as a clean checkout has it. */

@@ -11,9 +11,9 @@ import {
 /** A lookup over a plain `{ scope: { key: token } }` fixture. */
 const from = (document) => (scope, key) => document[scope]?.[key];
 
-const WEB = 'INTERNAL_API_KEY_WEB';
-const ADMIN = 'INTERNAL_API_KEY_ADMIN';
-const KEY = 'INTERNAL_API_KEY';
+const WEB = 'SERVICE_KEY_WEB';
+const ADMIN = 'SERVICE_KEY_ADMIN';
+const KEY = 'SERVICE_KEY';
 
 const consistent = {
   api: { [WEB]: 'web-token', [ADMIN]: 'admin-token' },

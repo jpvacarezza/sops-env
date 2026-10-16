@@ -41,7 +41,7 @@
 
 ## v0.1.0 — 2026-10-16
 
-First release. Extracted from tripgency's `tools/secrets/` with history.
+First release.
 
 - Configuration moves to `secrets.config.mjs`: scopes with per-key notes, apps
   with scopes, dotenv/example/schema/destination, environments, pairs,

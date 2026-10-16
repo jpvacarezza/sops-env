@@ -78,10 +78,10 @@ export function readSchemaKeys(source) {
  *
  * Brace-matched, not "the first line that starts with `})`". That shortcut gave
  * the right answer only by accident: in `apps/api/src/config/env.ts` the first
- * such line closes `TRUST_PROXY`'s own `.transform()`, and it landed after the
+ * such line closes `PROXY_HOPS`'s own `.transform()`, and it landed after the
  * `.default('false')` this needs to see. Reorder that entry to
  * `.transform(…).default('false')` and the shortcut cuts the default off, which
- * would flip `TRUST_PROXY` to `required` and make `buildMatrix` emit a
+ * would flip `PROXY_HOPS` to `required` and make `buildMatrix` emit a
  * `missing-required` error per environment for a variable that has a default.
  *
  * A brace inside a string literal would still throw the count off. No schema
@@ -160,7 +160,7 @@ function declarationFrom(body) {
  * end-of-file: `apps/api/src/config/env.ts` chains object-level `.refine()`
  * calls after the object, and the last key would otherwise absorb them.
  *
- * This is presence only, and presence is not semantics. `TRUST_PROXY` reads as
+ * This is presence only, and presence is not semantics. `PROXY_HOPS` reads as
  * a `default` and is really a union collapsed to boolean|number;
  * `ENABLED_COUNTRIES` reads as a default of `''` and is really a validated
  * ISO-3166 list; `GOOGLE_CLIENT_ID` reads as `optional` and is required in
@@ -199,7 +199,7 @@ export function readSchemaDeclarations(source) {
  * `includeCommented: false` (the default) reads only real assignments, which is
  * what the projection contract means: a commented line ships nothing. Pass
  * `true` to also count `# KEY=`, which is how an optional variable is
- * documented here — `VENDOR_DATA_DIR` and `SENTRY_DSN` both have defaults, and
+ * documented here — `VENDOR_DATA_DIR` and `MONITORING_DSN` both have defaults, and
  * writing them as empty assignments would state something untrue.
  */
 export function readExampleKeys(source, { includeCommented = false } = {}) {
