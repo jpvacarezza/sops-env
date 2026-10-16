@@ -112,3 +112,28 @@ jobs:
       - run: pnpm test
         env:
           CI: '1'
+
+  # Advisory gate on the dependency tree. `--audit-level=high` keeps moderate
+  # and low advisories (often unreachable dev-only noise) from blocking merges
+  # while still failing on anything that is realistically exploitable. Run for
+  # prod only first so a runtime advisory is named as such, then for the whole
+  # tree (dev tooling runs in CI and on laptops, so it is an attack surface).
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level=high
+
+      - name: Audit all dependencies
+        run: pnpm audit --audit-level=high
