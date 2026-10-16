@@ -1,0 +1,62 @@
+name: Dependency outdated report
+
+# Read-only signal for npm versions. Opens NO pull requests: the install-time
+# gate (`minimumReleaseAge` in pnpm-workspace.yaml) stays the only thing that
+# decides what gets installed. This job only keeps one GitHub issue up to date.
+# Not part of CI: a red build because a patch exists would teach people to
+# ignore real failures.
+
+on:
+  schedule:
+    # Monday 11:17 UTC. Off the hour to avoid the scheduler's top-of-hour load.
+    - cron: '17 11 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: deps-outdated-report
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    name: Outdated report
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # Frozen install re-applies the gate; never `--trust-lockfile`.
+      - run: pnpm install --frozen-lockfile
+
+      - name: Publish the report as a single issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: 'Dependency updates'
+        run: |
+          set -euo pipefail
+          # `pnpm outdated` exits 1 when something is outdated; that is the
+          # signal, not a failure.
+          pnpm outdated --format table > "${RUNNER_TEMP}/outdated.txt" 2>&1 || true
+          if [ -s "${RUNNER_TEMP}/outdated.txt" ]; then
+            body="$(printf 'Weekly `pnpm outdated` (%s). Informational only; the install gate still applies.\n\n```\n%s\n```\n' "$(date -u +%F)" "$(cat "${RUNNER_TEMP}/outdated.txt")")"
+          else
+            body="$(printf 'Everything is up to date as of %s.' "$(date -u +%F)")"
+          fi
+          number="$(gh issue list --state open --search "\"${TITLE}\" in:title" --json number,title --jq "[.[] | select(.title == \"${TITLE}\")][0].number // empty")"
+          if [ -n "${number}" ]; then
+            gh issue edit "${number}" --body "${body}"
+          else
+            gh issue create --title "${TITLE}" --body "${body}"
+          fi
