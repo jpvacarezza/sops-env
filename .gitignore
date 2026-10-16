@@ -1,6 +1,9 @@
 node_modules
 test-output
 coverage
+# Local agent working notes. Prettier 3 reads .gitignore, so this also keeps
+# them out of format:check.
+.superpowers/
 # Decrypted working copies next to fixture ciphertext. The negation re-includes
 # the three fixture files, which are ciphertext and committed on purpose.
 test/fixtures/project/secrets/*

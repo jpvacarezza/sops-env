@@ -15,9 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # No `version:`: package.json `packageManager` pins pnpm, and giving both
+      # can fail as "multiple versions of pnpm specified".
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11.3.0
 
       - uses: actions/setup-node@v7
         with:
@@ -28,11 +28,19 @@ jobs:
 
       # Pin sops to the version the code is measured against.
       - name: Install sops
+        env:
+          SOPS_VERSION: '3.9.4'
+          # The sops-v3.9.4.linux.amd64 line of
+          # https://github.com/getsops/sops/releases/download/v3.9.4/sops-v3.9.4.checksums.txt
+          SOPS_SHA256: '5488e32bc471de7982ad895dd054bbab3ab91c417a118426134551e9626e4e85'
         run: |
-          curl -sSLo /usr/local/bin/sops \
-            "https://github.com/getsops/sops/releases/download/v3.9.4/sops-v3.9.4.linux.amd64"
-          chmod +x /usr/local/bin/sops
-          sops --version
+          set -euo pipefail
+          binary="${RUNNER_TEMP}/sops"
+          curl -fsSL "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.amd64" -o "${binary}"
+          echo "${SOPS_SHA256}  ${binary}" | sha256sum -c -
+          mkdir -p "${HOME}/bin" && install -m 0755 "${binary}" "${HOME}/bin/sops"
+          echo "${HOME}/bin" >> "${GITHUB_PATH}"
+          "${HOME}/bin/sops" --version
 
       - run: pnpm test
         env:
