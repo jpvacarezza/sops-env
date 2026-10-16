@@ -121,20 +121,22 @@ export default {
 
 An absent `pairs` is `[]`, absent `exemptions` maps are empty, an app without `schema` gets a `schema-unchecked` warning from `audit`, and an app without `destination` is not synced. Resolve-time errors name the field (`apps.web.scopes[1] "shred" is not a declared scope`) and run the shared/app key collision check.
 
-The config holds names only. A note must not start with `age1`, `AGE-SECRET-KEY-` or `ENC[`, and must not contain `=`; the loader rejects it, because a pasted secret is the failure this guards against. A note is shown in the grid and emitted by `list --json` as `note`.
+The config holds names only. A note must not start with `age1`, `AGE-SECRET-KEY-` or `ENC[`, and must not contain `=`; the loader rejects it, because a pasted secret is the failure this guards against. The same rule covers pair `name`/`why` and exemption reasons. Provider fields that name a variable (`vercel.token`/`team`, `railway.token`/`project`/`environment.*`, destination `project`/`service.*`) must be UPPER_SNAKE_CASE, and a rejected string is never echoed. A note is shown in the grid and emitted by `list --json` as `note`.
+
+A partial `providers` block merges over the defaults, one level deep: `vercel: { token: 'MY_TOKEN' }` keeps `targets`. Environment names match `/^[a-z][a-z0-9-]*$/`; the environment with `sync: false` (`local` by default) is the laptop one, where placeholders are warnings and dotenv files are checked. `store.file` is one file name with exactly one `<environment>`; `store.dir` is a relative path without `..`.
 
 Types: `import('sops-env').SecretsConfig`; `defineConfig()` is the identity helper for editor completion.
 
 ## Commands
 
-Global options: `--config <file>` picks the config (default: nearest `secrets.config.mjs` above the cwd, or `$SOPS_ENV_CONFIG`); `--help` prints usage, `<command> --help` a command's own. With no command, `sops-env` opens the grid, which needs a terminal. An unknown command exits 2; a missing or invalid config exits 1.
+Global options: `--config <file>` picks the config (default: nearest `secrets.config.mjs` above the cwd, or `$SOPS_ENV_CONFIG`); `--help` prints usage, `<command> --help` a command's own. With no command, `sops-env` opens the grid, which needs a terminal. An unknown command exits 2; a missing or invalid config exits 1. A command that fails unexpectedly prints one line and exits 1; set `SOPS_ENV_DEBUG=1` for the stack.
 
 - `sops-env init --<env> <age1...> [--<env> <age1...>] [--force]` writes `.sops.yaml` from age public keys (public only, safe to commit). Exits 1 on a bad key, no environments, or an existing file without `--force`.
 - `sops-env edit <env>` opens one environment's ciphertext in `sops`. Exits 1 on an unknown environment.
-- `<value on stdin> | sops-env set <env|all> <scope> <KEY> [--sync]` writes one declared variable; the value is read from stdin, never argv. `--sync` dry-runs `sync` for the app the scope feeds, then offers the real one. Exits 1 on error.
+- `<value on stdin> | sops-env set <env|all> <scope> <KEY> [--sync]` writes one declared variable; the value is read from stdin, never from `sops-env`'s argv. `--sync` dry-runs `sync` for the app the scope feeds, then offers the real one. Exits 1 on error.
 - `sops-env unset <env|all> <scope> <KEY>` removes one variable. Takes no value; `--sync` is refused because providers only upsert.
 - `sops-env run <env> <app> -- <command...>` decrypts, projects the app's scopes and runs the command with them in its environment. Writes nothing to disk. Exits 1 on setup errors.
-- `sops-env materialize <env> <app|all>` writes the app's dotenv file (mode 0600, generated, gitignored). Exits 1 on error.
+- `sops-env materialize <env> <app|all>` writes the app's dotenv file (mode 0600, generated, gitignored). It refuses, before writing anything, a target `git check-ignore` does not confirm as ignored and an existing file without the generated header; `apps.<app>.dotenv` must stay under the config root. Exits 1 on error.
 - `sops-env sync <env> [<app>|all] [--dry-run]` pushes the projection to each app's destination provider. Dry-run prints destination and key names only. Exits 1 on error.
 - `sops-env check [--decrypt] [<env>...]` checks the ciphertext structure; with `--decrypt` it also decrypts and projects every app. Exits 1 on a finding.
 - `sops-env list [--fingerprints] [--json] [<env>...]` prints the grid as text or JSON. A viewer: it reads, never writes, and exits 0.
@@ -164,6 +166,7 @@ A destination names a provider: `destination: { provider: 'vercel' | 'railway' |
 
 - `tsx` is resolved from the consumer root (add it as your own devDependency), not from this package.
 - When `tsx` is not installed, or the app has no `schema`, the result is `schema-unchecked` (warn), never a verdict about the store.
+- A configured `schema.file` that does not exist is `schema-missing` (error), so a typo cannot switch the gate off.
 - `schemaRunner.runner: 'node'` runs JS-only schemas without `tsx`.
 - `schemaRunner.conditions` become `--conditions=<name>` in the child's `NODE_OPTIONS`, so workspace packages resolve to sources without a build.
 - `schemaRunner.cwd` is where the child runs: `'tmp'` (default, a directory with no `.env` files) or a path relative to the config.
@@ -175,7 +178,8 @@ A destination names a provider: `destination: { provider: 'vercel' | 'railway' |
 - Values leave a process only as fingerprints or behind a closure; `list`, `check`, `audit` and dry-run print names.
 - Presence is read from ciphertext without an age key.
 - Fingerprints are HMAC with a per-run random salt, eight hex chars.
-- A value is never a command-line argument: stdin or a masked prompt.
+- A value is never an argument to `sops-env`: stdin or a masked prompt. It reaches `sops set` on the child's argv for the child's lifetime (sops 3.9 has no stdin mode).
+- A platform error is printed with every synced value replaced by `<redacted>`, capped at 500 characters.
 - `set` and `unset` write per cell: three changed lines per edit.
 - No runtime dependencies, pinned by a test.
 

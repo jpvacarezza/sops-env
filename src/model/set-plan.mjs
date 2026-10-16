@@ -19,9 +19,10 @@ export const setUsage = (
                 feeds, then offer the real sync. Needs a terminal to confirm at;
                 without one it stops after the dry run.
 
-The value is read from stdin and never taken as an argument: on Windows any
-process running as you can read another process's command line, and argv lands
-in your shell history either way.
+The value is read from stdin and is never an argument to sops-env: on Windows
+any process running as you can read another process's command line, and argv
+lands in your shell history either way. It does reach \`sops set\` on the
+child's argv for the child's lifetime (sops 3.9 has no stdin mode).
 
   printf '%s' "$NEW" | sops-env set staging api BETTER_AUTH_URL_ADMIN
   sops-env unset local api VENDOR_DATA_DIR`;
