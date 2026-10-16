@@ -26,7 +26,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Same pin and lines as tripgency's secrets-sync.yml.
+      # Pin sops to the version the code is measured against.
       - name: Install sops
         run: |
           curl -sSLo /usr/local/bin/sops \
