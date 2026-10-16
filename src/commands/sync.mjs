@@ -1,11 +1,6 @@
 import { decryptSecretsFile } from '../store/decrypt.mjs';
 import { secretsFilePath } from '../store/paths.mjs';
-import {
-  resolveRailwayConfig,
-  resolveVercelConfig,
-} from '../providers/platform-config.mjs';
-import { upsertRailwayVariables } from '../providers/railway.mjs';
-import { upsertVercelEnv } from '../providers/vercel.mjs';
+import { providerFor } from '../providers/index.mjs';
 import { parseSyncArgs, planSync } from '../model/sync-plan.mjs';
 
 /**
@@ -44,14 +39,17 @@ export async function main(ctx, argv) {
     }
 
     try {
-      const provider = ctx.app[row.app].destination.provider;
-      if (provider === 'railway') {
-        const config = resolveRailwayConfig(environment);
-        await upsertRailwayVariables({ ...config, env: row.getEnv() });
-      } else {
-        const config = resolveVercelConfig(row.app, environment);
-        await upsertVercelEnv({ ...config, env: row.getEnv(), ctx });
-      }
+      const provider = providerFor(ctx, row.app);
+      const credentials = provider.resolve(ctx, {
+        app: row.app,
+        environment,
+        env: process.env,
+      });
+      await provider.upsert(credentials, {
+        env: row.getEnv(),
+        keys: row.keys,
+        ctx,
+      });
       console.log(`upserted ${label}`);
     } catch (error) {
       console.error(error.message);

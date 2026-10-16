@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { fixtureCtx, registryCtx } from '../../test/helpers/ctx.mjs';
-import { destinationFor, parseSyncArgs, vercelVarType } from './sync-plan.mjs';
+import { varType } from '../providers/vercel.mjs';
+import { destinationFor, parseSyncArgs } from './sync-plan.mjs';
 
 const ctx = registryCtx(
   { shared: [], api: [], web: [], admin: [], ingest: [] },
@@ -33,11 +34,11 @@ describe('parseSyncArgs and the deployable list', () => {
   });
 });
 
-describe('vercelVarType', () => {
+describe('vercel varType', () => {
   it('respects a custom public prefix', () => {
     const custom = fixtureCtx({ publicPrefixes: ['PUBLIC_'] });
-    expect(vercelVarType(custom, 'PUBLIC_X')).toBe('plain');
-    expect(vercelVarType(custom, 'NEXT_PUBLIC_X')).toBe('sensitive');
+    expect(varType(custom, 'PUBLIC_X')).toBe('plain');
+    expect(varType(custom, 'NEXT_PUBLIC_X')).toBe('sensitive');
   });
 });
 

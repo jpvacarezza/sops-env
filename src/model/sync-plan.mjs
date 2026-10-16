@@ -1,4 +1,7 @@
+import { destinationFor } from '../providers/index.mjs';
 import { projectEnv } from '../store/project.mjs';
+
+export { destinationFor };
 
 const USAGE =
   'usage: sops-env sync <environment> [<app>|all] [--dry-run]\n' +
@@ -53,26 +56,6 @@ export function parseSyncArgs(ctx, argv) {
   }
 
   return { environment, apps, dryRun: flags.has('--dry-run') };
-}
-
-/** Vercel: a public client var stays readable; everything else is sensitive. */
-export function vercelVarType(ctx, key) {
-  return ctx.publicPrefixes.some((prefix) => key.startsWith(prefix))
-    ? 'plain'
-    : 'sensitive';
-}
-
-/**
- * Where one app's projection is pushed: `railway/api`, `vercel/web`; null for
- * an app with no destination. Task 7 asks the provider instead.
- *
- * Exported so anything that *shows* a destination reads it from the same place
- * the sync does. A second copy of this rule elsewhere would eventually disagree
- * with where the values actually go, which is the worst kind of wrong label.
- */
-export function destinationFor(ctx, app) {
-  const destination = ctx.app[app]?.destination;
-  return destination ? `${destination.provider}/${app}` : null;
 }
 
 /**

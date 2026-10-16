@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { BUILTIN_PROVIDERS } from '../providers/index.mjs';
 import { resolveConfig } from './resolve.mjs';
 
 export const CONFIG_FILE_NAME = 'secrets.config.mjs';
@@ -26,13 +27,12 @@ export function findConfigFile(cwd) {
 /**
  * Import the config module. Consumer-supplied providers given as a path string are
  * imported relative to the config file here, because importing is async and
- * `resolveConfig` is pure. `providers` starts as the builtin map (Task 7 wires it;
- * until then it is whatever the caller passes).
+ * `resolveConfig` is pure. `providers` starts as the builtin map.
  */
 export async function loadConfig({
   cwd = process.cwd(),
   file = process.env.SOPS_ENV_CONFIG,
-  providers = {},
+  providers = BUILTIN_PROVIDERS,
 } = {}) {
   const configFile = file
     ? isAbsolute(file)

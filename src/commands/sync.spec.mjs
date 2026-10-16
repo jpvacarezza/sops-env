@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { registryCtx } from '../../test/helpers/ctx.mjs';
-import { parseSyncArgs, planSync, vercelVarType } from '../model/sync-plan.mjs';
-import { upsertVercelEnv } from '../providers/vercel.mjs';
-import { upsertRailwayVariables } from '../providers/railway.mjs';
+import { parseSyncArgs, planSync } from '../model/sync-plan.mjs';
+import * as railway from '../providers/railway.mjs';
+import * as vercel from '../providers/vercel.mjs';
+
+const { varType } = vercel;
 
 const CTX = registryCtx(
   { shared: [], api: [], web: [], admin: [], ingest: [] },
@@ -37,14 +39,14 @@ describe('parseSyncArgs', () => {
   });
 });
 
-describe('vercelVarType', () => {
+describe('vercel varType', () => {
   it('marks NEXT_PUBLIC_* as plain so the client bundle can read them', () => {
-    expect(vercelVarType(CTX, 'NEXT_PUBLIC_SITE_URL')).toBe('plain');
+    expect(varType(CTX, 'NEXT_PUBLIC_SITE_URL')).toBe('plain');
   });
 
   it('marks everything else as sensitive', () => {
-    expect(vercelVarType(CTX, 'INTERNAL_API_KEY')).toBe('sensitive');
-    expect(vercelVarType(CTX, 'API_URL')).toBe('sensitive');
+    expect(varType(CTX, 'INTERNAL_API_KEY')).toBe('sensitive');
+    expect(varType(CTX, 'API_URL')).toBe('sensitive');
   });
 });
 
@@ -117,7 +119,7 @@ describe('planSync', () => {
   });
 });
 
-describe('upsertVercelEnv', () => {
+describe('vercel.upsert', () => {
   it('POSTs every key with upsert=true and never puts values in the returned summary', async () => {
     const fetchImpl = vi.fn(async () => ({
       ok: true,
@@ -125,18 +127,18 @@ describe('upsertVercelEnv', () => {
       json: async () => ({ created: [] }),
     }));
 
-    const summary = await upsertVercelEnv(
+    const env = {
+      API_URL: 'https://api.test',
+      NEXT_PUBLIC_SITE_URL: 'https://web.test',
+    };
+    const summary = await vercel.upsert(
       {
         token: 'tok',
         teamId: 'team_1',
         projectId: 'prj_web',
         targets: ['preview'],
-        ctx: CTX,
-        env: {
-          API_URL: 'https://api.test',
-          NEXT_PUBLIC_SITE_URL: 'https://web.test',
-        },
       },
+      { env, keys: Object.keys(env).sort(), ctx: CTX },
       { fetchImpl },
     );
 
@@ -175,21 +177,16 @@ describe('upsertVercelEnv', () => {
     }));
 
     await expect(
-      upsertVercelEnv(
-        {
-          token: 'tok',
-          projectId: 'prj',
-          targets: ['production'],
-          ctx: CTX,
-          env: { A: '1' },
-        },
+      vercel.upsert(
+        { token: 'tok', projectId: 'prj', targets: ['production'] },
+        { env: { A: '1' }, keys: ['A'], ctx: CTX },
         { fetchImpl },
       ),
     ).rejects.toThrow(/403/);
   });
 });
 
-describe('upsertRailwayVariables', () => {
+describe('railway.upsert', () => {
   it('calls variableCollectionUpsert with skipDeploys so git remains the deploy signal', async () => {
     const fetchImpl = vi.fn(async () => ({
       ok: true,
@@ -197,14 +194,15 @@ describe('upsertRailwayVariables', () => {
       json: async () => ({ data: { variableCollectionUpsert: true } }),
     }));
 
-    const summary = await upsertRailwayVariables(
+    const env = { DATABASE_URL: 'postgresql://x/y', LOG_LEVEL: 'info' };
+    const summary = await railway.upsert(
       {
         token: 'tok',
         projectId: 'proj',
         environmentId: 'env',
         serviceId: 'svc',
-        env: { DATABASE_URL: 'postgresql://x/y', LOG_LEVEL: 'info' },
       },
+      { env, keys: Object.keys(env).sort(), ctx: CTX },
       { fetchImpl },
     );
 
@@ -231,14 +229,9 @@ describe('upsertRailwayVariables', () => {
     }));
 
     await expect(
-      upsertRailwayVariables(
-        {
-          token: 'tok',
-          projectId: 'p',
-          environmentId: 'e',
-          serviceId: 's',
-          env: { A: '1' },
-        },
+      railway.upsert(
+        { token: 'tok', projectId: 'p', environmentId: 'e', serviceId: 's' },
+        { env: { A: '1' }, keys: ['A'], ctx: CTX },
         { fetchImpl },
       ),
     ).rejects.toThrow(/Not Authorized/);

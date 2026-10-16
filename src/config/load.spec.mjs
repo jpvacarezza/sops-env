@@ -110,6 +110,49 @@ console.log(JSON.stringify([
     expect(JSON.parse(out)).toEqual(['prov/api', './prov.mjs', true, false]);
   });
 
+  it('rejects an unknown provider name against the builtin registry', async () => {
+    const root = scratch();
+    writeFileSync(
+      join(root, 'secrets.config.mjs'),
+      `export default {
+  scopes: { api: { keys: { DATABASE_URL: null } } },
+  apps: { api: { scopes: ['api'], destination: { provider: 'heroku' } } },
+};
+`,
+    );
+
+    await expect(loadConfig({ cwd: root })).rejects.toThrow(
+      /"heroku" is not a known provider \(known: vercel, railway\)/,
+    );
+  });
+
+  it('accepts an inline provider object alongside the builtins', async () => {
+    const root = scratch();
+    writeFileSync(
+      join(root, 'secrets.config.mjs'),
+      `const fly = {
+  name: 'fly',
+  label: (_ctx, { app }) => \`fly/\${app}\`,
+  resolve: () => ({}),
+  upsert: async () => ({}),
+};
+export default {
+  scopes: { api: { keys: { DATABASE_URL: null } }, web: { keys: { A: null } } },
+  apps: {
+    api: { scopes: ['api'], destination: { provider: fly } },
+    web: { scopes: ['web'], destination: { provider: 'vercel', project: 'P' } },
+  },
+};
+`,
+    );
+
+    const ctx = await loadConfig({ cwd: root });
+
+    expect(ctx.app.api.destination.provider).toBe('fly');
+    expect(ctx.providers.fly.label(ctx, { app: 'api' })).toBe('fly/api');
+    expect(ctx.providers.vercel).toBeDefined();
+  });
+
   it('does not freeze the config object the user wrote', async () => {
     const root = scratch();
     writeFileSync(
