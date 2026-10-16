@@ -1,0 +1,13 @@
+# Search noise for agents. ripgrep (Claude Code Grep/Glob) reads .ignore files;
+# Prettier and ESLint do not. A search that names a file, or a Read, still
+# reaches everything listed: this hides it from directory-wide sweeps only.
+# Executed plans are hidden by docs/superpowers/.ignore, which also holds for a
+# search started inside docs/.
+#
+# A Grep `glob` that matches an ignored file (`*.yaml`) brings that file back:
+# ripgrep treats --glob as an override. Ignored directories stay skipped.
+
+/node_modules/
+/test-output/
+/coverage/
+/pnpm-lock.yaml

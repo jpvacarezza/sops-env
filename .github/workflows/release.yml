@@ -13,6 +13,24 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Refuse to publish anything but a deliberate, consistent release: an
+      # annotated tag, whose version is the one in package.json, and which the
+      # remote still resolves to the commit we are about to release.
+      # Annotation is read from the remote, not the local ref: checkout can
+      # rewrite a tag ref locally, which would hide the difference.
+      - name: Verify the tag
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          raw="$(git ls-remote origin "refs/tags/${tag}" | cut -f1)"
+          peeled="$(git ls-remote origin "refs/tags/${tag}^{}" | cut -f1)"
+          [ -n "${peeled}" ] || { echo "${tag} is not an annotated tag"; exit 1; }
+          [ "${raw}" != "${peeled}" ] || { echo "${tag} is not an annotated tag"; exit 1; }
+          pkg="$(node -p "require('./package.json').version")"
+          [ "${pkg}" = "${tag#v}" ] || { echo "package.json version ${pkg} != tag ${tag}"; exit 1; }
+          head="$(git rev-parse HEAD)"
+          [ "${peeled}" = "${head}" ] || { echo "remote ${tag} resolves to ${peeled}, checked out ${head}"; exit 1; }
+
       # Notes are the CHANGELOG section for this tag, so the release page and
       # the file cannot drift.
       - name: Extract release notes
