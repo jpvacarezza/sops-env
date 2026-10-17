@@ -358,6 +358,7 @@ export async function run(
           counts: matrix.counts,
           slice,
           columns: output.columns,
+          height: output.rows,
           cellNote,
           cellValue,
           colors,
