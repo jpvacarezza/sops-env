@@ -239,12 +239,39 @@ export function validateConfig(raw, { providers = null, root = null } = {}) {
       }
       if (entry.schema !== undefined && entry.schema !== null) {
         if (!isObject(entry.schema))
-          bad(`apps.${app}.schema`, 'must be null or { file, exportName }');
+          bad(
+            `apps.${app}.schema`,
+            'must be null or { keys?, command?, cwd? }',
+          );
         else {
-          if (typeof entry.schema.file !== 'string')
-            bad(`apps.${app}.schema.file`, 'required');
-          if (typeof entry.schema.exportName !== 'string')
-            bad(`apps.${app}.schema.exportName`, 'required');
+          const { keys, command, cwd } = entry.schema;
+          if ('file' in entry.schema || 'exportName' in entry.schema)
+            bad(
+              `apps.${app}.schema`,
+              '`file` and `exportName` were replaced by `command` (the validator) and `keys` (a JSON Schema of names); see CHANGELOG.md',
+            );
+          else if (keys === undefined && command === undefined)
+            bad(`apps.${app}.schema`, 'give a keys file, a command, or both');
+          if (keys !== undefined && (typeof keys !== 'string' || keys === ''))
+            bad(
+              `apps.${app}.schema.keys`,
+              'must be a path relative to the config',
+            );
+          if (
+            command !== undefined &&
+            (!Array.isArray(command) ||
+              command.length === 0 ||
+              !command.every((part) => typeof part === 'string' && part !== ''))
+          )
+            bad(
+              `apps.${app}.schema.command`,
+              'must be a non-empty array of strings: an argv, run without a shell',
+            );
+          if (cwd !== undefined && (typeof cwd !== 'string' || cwd === ''))
+            bad(
+              `apps.${app}.schema.cwd`,
+              'must be "tmp" or a path relative to the config',
+            );
         }
       }
       if (entry.destination !== undefined && entry.destination !== null) {
@@ -384,7 +411,12 @@ export function validateConfig(raw, { providers = null, root = null } = {}) {
 
   // exemptions, publicPrefixes, placeholderPattern, schemaRunner, contract
   if (raw.exemptions !== undefined) {
-    for (const group of ['unparsedBySchema', 'platformProvided', 'derived']) {
+    if (isObject(raw.exemptions) && 'unparsedBySchema' in raw.exemptions)
+      bad(
+        'exemptions.unparsedBySchema',
+        'was renamed to `undeclared`; see CHANGELOG.md',
+      );
+    for (const group of ['undeclared', 'platformProvided', 'derived']) {
       const map = raw.exemptions?.[group];
       if (map === undefined) continue;
       if (!isObject(map)) bad(`exemptions.${group}`, 'must be { KEY: reason }');
@@ -406,14 +438,11 @@ export function validateConfig(raw, { providers = null, root = null } = {}) {
     !(raw.placeholderPattern instanceof RegExp)
   )
     bad('placeholderPattern', 'must be a RegExp');
-  if (raw.schemaRunner !== undefined) {
-    if (!isObject(raw.schemaRunner)) bad('schemaRunner', 'must be an object');
-    else if (
-      raw.schemaRunner.runner !== undefined &&
-      !['tsx', 'node'].includes(raw.schemaRunner.runner)
-    )
-      bad('schemaRunner.runner', 'must be "tsx" or "node"');
-  }
+  if (raw.schemaRunner !== undefined)
+    bad(
+      'schemaRunner',
+      'was removed; put the validator in apps.<app>.schema.command; see CHANGELOG.md',
+    );
   if (raw.contract !== undefined && !isObject(raw.contract))
     bad('contract', 'must be an object');
 

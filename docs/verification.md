@@ -50,7 +50,8 @@ sha256sum apps/*/.env.local        > $OUT/materialized.sha256
 
 Capture exit codes with the output; an unchanged message with a changed exit code
 is a regression. Add any command the PR touches (`list` grid text, `set`
-planning, `audit` with the schema pass when `tsx` is installed).
+planning, `audit` with the schema pass, which runs the fixture's validator
+commands).
 
 ## Change, capture again, diff
 
@@ -68,5 +69,5 @@ adds on purpose, for example `jq 'del(.rows[].note)'`, and say so.
 
 List the commands that ran and the ones that could not, with the reason. For
 example: `sync production --dry-run` was not run because no provider
-credentials were available; the schema pass was skipped because `tsx` was not
-installed. Do not write "verified" about a command that did not run.
+credentials were available; the schema pass was skipped because the validator
+command was not on `PATH`. Do not write "verified" about a command that did not run.

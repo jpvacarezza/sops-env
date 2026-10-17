@@ -1,3 +1,8 @@
+import { fileURLToPath } from 'node:url';
+
+/** A path inside this fixture, absolute: a validator command runs elsewhere. */
+const here = (path) => fileURLToPath(new URL(path, import.meta.url));
+
 /**
  * A small consumer: two apps, three scopes, one pair, one
  * exemption of each kind, one app on Railway and one on Vercel.
@@ -31,7 +36,10 @@ export default {
   apps: {
     api: {
       scopes: ['shared', 'api'],
-      schema: { file: 'apps/api/src/env.ts', exportName: 'parseApiEnv' },
+      schema: {
+        keys: 'apps/api/env.schema.json',
+        command: [process.execPath, here('apps/api/validate-env.mjs')],
+      },
       destination: {
         provider: 'railway',
         service: {
@@ -42,7 +50,10 @@ export default {
     },
     web: {
       scopes: ['shared', 'web'],
-      schema: { file: 'apps/web/src/env.schema.ts', exportName: 'parseWebEnv' },
+      schema: {
+        keys: 'apps/web/env.schema.json',
+        command: [process.execPath, here('apps/web/validate-env.mjs')],
+      },
       destination: { provider: 'vercel', project: 'VERCEL_PROJECT_ID_WEB' },
     },
   },
@@ -56,7 +67,7 @@ export default {
     },
   ],
   exemptions: {
-    unparsedBySchema: {
+    undeclared: {
       NEXT_PUBLIC_SITE_URL:
         'Next only inlines literal process.env.NEXT_PUBLIC_X reads.',
     },

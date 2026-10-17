@@ -143,7 +143,7 @@ function paintCell(cellText, cell, row, { colors, fill }) {
  *
  * A key no schema declares counts as not required, so missing means yellow. That
  * is the honest reading: nothing in the code says the app needs it. `MONITORING_ORG`
- * is the case — real, used by a CLI, and validated by no Zod schema.
+ * is the case — real, used by a CLI, and validated by no schema.
  */
 export function rowTone(row, environments) {
   if (isComplete(row, environments)) return 'green';

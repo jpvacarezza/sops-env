@@ -103,7 +103,7 @@ export function readStdin(ctx, stream = process.stdin) {
  * offending key, which is itself a mutation that makes the document valid.
  *
  * The read-back is not ceremony: `sops set` reports success for a value it
- * coerced, and a silent type change surfaces much later as a Zod failure at boot.
+ * coerced, and a silent type change surfaces much later as a validation failure at boot.
  */
 export function writeCell(
   ctx,

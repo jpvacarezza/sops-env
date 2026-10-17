@@ -1,29 +1,23 @@
 /**
  * Extractors for the env-var contract.
  *
- * The same list of variables lives in four places: each app's Zod schema, its
- * `.env.example`, the scope registry in `secrets.config.mjs`, and the code that reads
- * `process.env`. `env-contract.spec.mjs` compares them; this file is only the
- * reading.
+ * The same list of variables lives in four places: each app's schema keys file
+ * (a JSON Schema document), its `.env.example`, the scope registry in
+ * `secrets.config.mjs`, and the code that reads `process.env`.
+ * `env-contract.spec.mjs` compares them; this file is only the reading.
  *
- * Everything here parses source text with a regex rather than importing it,
- * for reasons specific to the files involved: `apps/api/src/config/env.ts`
- * calls `loadEnvConfig()` at import time, so importing it would demand a valid
- * environment and run dotenv; and its `EnvSchema` is wrapped in `.refine()`,
- * which does not expose `.shape`. `apps/api/src/architecture/env-port.spec.ts`
- * reads `config/env.ts` as text for the same reason.
- *
- * The price of a regex is that it can silently stop matching, so
- * `readSchemaKeys` throws on an empty result and the spec re-runs all three
- * against the real files.
+ * The schema keys file is a manifest of names, parsed with `JSON.parse`. It says
+ * which variables an app declares and whether each is required, defaulted or
+ * optional. It never judges a value: that is the app's own validator command,
+ * run by `schema/runner.mjs`.
  */
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-/** Absolute path of the app's schema module, or null when the app has none. */
-export function schemaFile(ctx, app) {
-  const schema = ctx.app[app]?.schema;
-  return schema ? resolve(ctx.root, schema.file) : null;
+/** Absolute path of the app's schema keys file, or null when it declares none. */
+export function schemaKeysFile(ctx, app) {
+  const keys = ctx.app[app]?.schema?.keys;
+  return keys ? resolve(ctx.root, keys) : null;
 }
 
 /** That app's `.env.example`, the documented contract. */
@@ -50,147 +44,97 @@ function expandPattern(root, pattern) {
   return paths;
 }
 
-/**
- * Keys declared in a Zod object literal.
- *
- * Matches `KEY: z` and nothing else, which covers the multi-line entries too
- * (`DATABASE_URL: z\n  .string()`): every entry in all three schemas begins
- * with `z`.
- */
-export function readSchemaKeys(source) {
-  const keys = [...source.matchAll(/^\s+([A-Z][A-Z0-9_]*):\s*z\b/gm)].map(
-    (match) => match[1],
-  );
+const NAME = /^[A-Z][A-Z0-9_]*$/;
 
-  if (keys.length === 0) {
+/**
+ * The `properties` of a JSON Schema document, validated.
+ *
+ * Throws on an empty or malformed document, because an empty set would make
+ * every parity assertion downstream compare nothing and pass.
+ */
+function schemaProperties(source) {
+  let document;
+  try {
+    document = JSON.parse(source);
+  } catch (error) {
     throw new Error(
-      'readSchemaKeys found no keys. The schema was reshaped and this regex no ' +
-        'longer matches it — every parity assertion downstream would now be ' +
-        'comparing empty sets and passing. Fix the pattern, do not delete this check.',
+      `The schema keys file is not valid JSON: ${error.message}`,
+      {
+        cause: error,
+      },
     );
   }
 
-  return keys;
-}
+  const properties = document?.properties;
+  if (
+    properties === null ||
+    typeof properties !== 'object' ||
+    Array.isArray(properties) ||
+    Object.keys(properties).length === 0
+  ) {
+    throw new Error(
+      'The schema keys file declares no `properties`. Every presence marker ' +
+        'downstream would read as "not validated" and no grid cell would look wrong.',
+    );
+  }
 
-/**
- * Offset where the enclosing `z.object({ … })` literal closes.
- *
- * Brace-matched, not "the first line that starts with `})`". That shortcut gave
- * the right answer only by accident: in `apps/api/src/config/env.ts` the first
- * such line closes `PROXY_HOPS`'s own `.transform()`, and it landed after the
- * `.default('false')` this needs to see. Reorder that entry to
- * `.transform(…).default('false')` and the shortcut cuts the default off, which
- * would flip `PROXY_HOPS` to `required` and make `buildMatrix` emit a
- * `missing-required` error per environment for a variable that has a default.
- *
- * A brace inside a string literal would still throw the count off. No schema
- * message contains one, and the spec runs this against all three real files, so
- * that stays a known limit rather than a guess.
- */
-function objectEnd(code, from) {
-  let depth = 1;
-
-  for (let index = from; index < code.length; index += 1) {
-    const character = code[index];
-    if (character === '{') depth += 1;
-    else if (character === '}') {
-      depth -= 1;
-      if (depth === 0) return index;
+  for (const key of Object.keys(properties)) {
+    if (!NAME.test(key)) {
+      throw new Error(
+        `The schema keys file declares ${JSON.stringify(key)}, which is not an environment variable name (UPPER_SNAKE_CASE).`,
+      );
     }
   }
 
-  return code.length;
+  return { properties, required: new Set(document.required ?? []) };
+}
+
+/** Variable names declared by a JSON Schema document, in declaration order. */
+export function readSchemaKeys(source) {
+  return Object.keys(schemaProperties(source).properties);
 }
 
 /**
- * The argument of the first `.default(...)`: the literal, or `null` when it is
- * computed, or `undefined` when there is no default at all.
+ * How each declared variable is declared: `required`, `default`, or `optional`.
  *
- * Three states rather than two because "defaulted to something I cannot render
- * in a grid cell" and "not defaulted" mean opposite things to a reader deciding
- * whether an unset variable is a problem.
- */
-function defaultLiteral(body) {
-  const at = body.search(/\.default\s*\(/);
-  if (at === -1) return undefined;
-
-  const open = body.indexOf('(', at);
-  let depth = 0;
-  for (let index = open; index < body.length; index += 1) {
-    if (body[index] === '(') depth += 1;
-    else if (body[index] === ')') {
-      depth -= 1;
-      if (depth === 0) {
-        const inner = body.slice(open + 1, index).trim();
-        return /[(){}[\]]/.test(inner) ? null : inner;
-      }
-    }
-  }
-
-  return null;
-}
-
-function declarationFrom(body) {
-  const literal = defaultLiteral(body);
-  if (literal !== undefined) {
-    return { presence: 'default', defaultLiteral: literal };
-  }
-
-  return {
-    presence: /\.(optional|nullish)\s*\(/.test(body) ? 'optional' : 'required',
-    defaultLiteral: null,
-  };
-}
-
-/**
- * How each schema entry is declared: `required`, `default`, or `optional`.
+ * A property with a `default` is `default` even when it is also listed in
+ * `required`: a variable with a default is never missing. `defaultLiteral` is
+ * the default as text, or `null` when there is none.
  *
- * Uses the same `KEY: z` pattern as `readSchemaKeys`, so the two agree about
- * which keys exist for every input that matters — the difference is that this
- * one strips comments first, so a commented-out entry inside a `/* … *\/` block
- * would be found by `readSchemaKeys` and not by this. `env-contract.spec.mjs`
- * asserts they agree on all three real files, which is the check that counts.
- *
- * Comments are stripped because several entries describe a default in prose
- * (`SWAGGER_ENABLED`: "Default false.") that they do not declare, and one that
- * does declare one describes it too.
- *
- * The last entry is bounded by the object literal's closing `})`, not by
- * end-of-file: `apps/api/src/config/env.ts` chains object-level `.refine()`
- * calls after the object, and the last key would otherwise absorb them.
- *
- * This is presence only, and presence is not semantics. `PROXY_HOPS` reads as
- * a `default` and is really a union collapsed to boolean|number;
- * `ENABLED_COUNTRIES` reads as a default of `''` and is really a validated
- * ISO-3166 list; `GOOGLE_CLIENT_ID` reads as `optional` and is required in
- * production by an object-level refinement no source scan can evaluate. Running
- * the real schema over the real projection is the only way to check those —
- * which is what `sops-env audit` does.
+ * This is presence only, and presence is not semantics. A constraint that
+ * depends on another variable, or on the environment, is invisible here.
+ * Running the app's own validator over the real projection is the only way to
+ * check those, which is what `sops-env audit` does.
  */
 export function readSchemaDeclarations(source) {
-  const code = stripComments(source);
-  const heads = [...code.matchAll(/^\s+([A-Z][A-Z0-9_]*):\s*z\b/gm)];
+  const { properties, required } = schemaProperties(source);
 
-  if (heads.length === 0) {
-    throw new Error(
-      'readSchemaDeclarations found no keys. The schema was reshaped and this ' +
-        'regex no longer matches it — every presence marker downstream would ' +
-        'read as "not validated" and no grid cell would look wrong. Fix the ' +
-        'pattern, do not delete this check.',
-    );
-  }
-
-  const declarations = {};
-
-  heads.forEach((head, index) => {
-    const start = head.index + head[0].length;
-    const next = heads[index + 1];
-    const end = next ? next.index : objectEnd(code, start);
-    declarations[head[1]] = declarationFrom(code.slice(start, end));
-  });
-
-  return declarations;
+  return Object.fromEntries(
+    Object.entries(properties).map(([key, property]) => {
+      if (
+        property !== null &&
+        typeof property === 'object' &&
+        'default' in property
+      ) {
+        const value = property.default;
+        return [
+          key,
+          {
+            presence: 'default',
+            defaultLiteral:
+              typeof value === 'string' ? value : JSON.stringify(value),
+          },
+        ];
+      }
+      return [
+        key,
+        {
+          presence: required.has(key) ? 'required' : 'optional',
+          defaultLiteral: null,
+        },
+      ];
+    }),
+  );
 }
 
 /**
@@ -215,9 +159,8 @@ export function readExampleKeys(source, { includeCommented = false } = {}) {
  *
  * Deliberately crude — it is a lint over our own source, not a JS parser. The
  * cost of over-stripping is a missed read inside a string literal, which is not
- * a pattern this repo uses; the cost of not stripping is two permanent false
- * positives from the JSDoc that explains why `NEXT_PUBLIC_*` bypasses the Zod
- * schemas.
+ * a pattern this repo uses; the cost of not stripping is permanent false
+ * positives from JSDoc that explains why `NEXT_PUBLIC_*` bypasses validation.
  */
 function stripComments(source) {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');

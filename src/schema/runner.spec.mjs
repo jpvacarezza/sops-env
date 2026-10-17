@@ -1,13 +1,11 @@
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { schemaFile } from '../model/env-contract.mjs';
 import { fixtureCtx, registryCtx } from '../../test/helpers/ctx.mjs';
 import {
+  COULD_NOT_RUN,
   childEnvironment,
-  defaultRunValidator,
   runnerCommand,
   schemaFindings,
   validateProjection,
@@ -26,7 +24,7 @@ const clean = {
   admin: {},
 };
 
-const okValidator = () => ({ status: 0, stdout: '{"ok":true}', stderr: '' });
+const okValidator = () => ({ status: 0, stdout: '', stderr: '' });
 
 describe('childEnvironment', () => {
   const base = {
@@ -85,21 +83,19 @@ describe('childEnvironment', () => {
     expect(env.NODE_ENV).toBe('test');
   });
 
-  it('maps the configured conditions to NODE_OPTIONS', () => {
-    const ctx = fixtureCtx({
-      schemaRunner: { conditions: ['@org/source'] },
-    });
-    const env = childEnvironment(ctx, {}, { environment: 'local', base });
-
-    expect(env.NODE_OPTIONS).toContain('--conditions=@org/source');
+  // The language-neutral twin of NODE_ENV: an app that has no use for NODE_ENV
+  // still has to know which environment it is being validated against.
+  it('names the environment for validators that are not Node apps', () => {
+    for (const environment of CTX.environments) {
+      expect(
+        childEnvironment(CTX, {}, { environment, base }).SOPS_ENVIRONMENT,
+      ).toBe(environment);
+    }
   });
 
-  it('keeps a developer NODE_OPTIONS and appends the conditions after it', () => {
-    const ctx = fixtureCtx({
-      schemaRunner: { conditions: ['@org/source'] },
-    });
+  it('does not touch NODE_OPTIONS', () => {
     const env = childEnvironment(
-      ctx,
+      CTX,
       {},
       {
         environment: 'local',
@@ -107,75 +103,157 @@ describe('childEnvironment', () => {
       },
     );
 
-    expect(env.NODE_OPTIONS).toBe('--no-warnings --conditions=@org/source');
-  });
-
-  it('leaves NODE_OPTIONS undefined when nothing configures it', () => {
-    const env = childEnvironment(CTX, {}, { environment: 'local', base });
-
-    expect(env.NODE_OPTIONS).toBeUndefined();
+    expect(env.NODE_OPTIONS).toBe('--no-warnings');
+    expect(
+      childEnvironment(CTX, {}, { environment: 'local', base }).NODE_OPTIONS,
+    ).toBeUndefined();
   });
 });
 
 describe('validateProjection', () => {
   const target = { environment: 'staging', app: 'api', document: clean };
 
-  it('passes on a valid verdict', () => {
+  it('passes on exit status 0', () => {
     expect(
       validateProjection(CTX, target, { runValidator: okValidator }),
     ).toEqual({ state: 'ok' });
   });
 
-  it('surfaces the schema message on an invalid one', () => {
+  it('surfaces what the command printed on any other status', () => {
     const runValidator = () => ({
       status: 1,
-      stdout:
-        '{"ok":false,"kind":"invalid","message":"  - DATABASE_URL: too short"}',
+      stdout: '',
+      stderr: '  - DATABASE_URL: too short\n',
+    });
+
+    expect(validateProjection(CTX, target, { runValidator })).toEqual({
+      state: 'invalid',
+      message: '- DATABASE_URL: too short',
+    });
+  });
+
+  it('falls back to stdout when stderr is empty', () => {
+    const runValidator = () => ({
+      status: 2,
+      stdout: 'DATABASE_URL: required',
       stderr: '',
     });
 
     expect(validateProjection(CTX, target, { runValidator })).toEqual({
       state: 'invalid',
-      message: '  - DATABASE_URL: too short',
+      message: 'DATABASE_URL: required',
+    });
+  });
+
+  it('still reports a verdict when the command printed nothing', () => {
+    const runValidator = () => ({ status: 3, stdout: '', stderr: '' });
+
+    expect(validateProjection(CTX, target, { runValidator })).toEqual({
+      state: 'invalid',
+      message: 'exited with status 3',
     });
   });
 
   // A validator that could not load its own subject has said nothing about the
   // store. Calling that `invalid` reads as "production's config is wrong" when
   // the truth is "this tool is broken", and someone would go looking at Railway.
-  it('reports a module that would not load as unavailable, not invalid', () => {
+  it('reports the could-not-run status as unavailable, not invalid', () => {
     const runValidator = () => ({
-      status: 1,
-      stdout:
-        '{"ok":false,"kind":"load","message":"Cannot find module env.schema.js"}',
-      stderr: '',
+      status: COULD_NOT_RUN,
+      stdout: '',
+      stderr: 'ModuleNotFoundError: No module named "api"',
     });
 
-    expect(validateProjection(CTX, target, { runValidator }).state).toBe(
-      'unavailable',
-    );
+    expect(validateProjection(CTX, target, { runValidator })).toEqual({
+      state: 'unavailable',
+      message: 'ModuleNotFoundError: No module named "api"',
+    });
   });
 
   // A validator that cannot run is not a pass. It is a warning that the check
   // did not happen, which is a different thing from "nothing is wrong".
   it('reports a spawn failure as unavailable, not as ok', () => {
-    const runValidator = () => ({ error: new Error('spawn ENOENT') });
+    const runValidator = () => ({ error: new Error('spawn EACCES') });
 
     expect(validateProjection(CTX, target, { runValidator }).state).toBe(
       'unavailable',
     );
   });
 
-  it('reports unparseable output as unavailable and keeps the tail of stderr', () => {
-    const runValidator = () => ({
-      status: 1,
-      stdout: '',
-      stderr: 'SyntaxError: boom',
-    });
+  it('reports a command killed by a signal or a timeout as unavailable', () => {
+    const runValidator = () => ({ status: null, signal: 'SIGTERM' });
     const outcome = validateProjection(CTX, target, { runValidator });
 
     expect(outcome.state).toBe('unavailable');
-    expect(outcome.message).toMatch(/SyntaxError: boom/);
+    expect(outcome.message).toMatch(/SIGTERM/);
+  });
+
+  it('reports a command that does not exist as missing, not as unchecked', () => {
+    const ctx = fixtureCtx({
+      apps: {
+        api: {
+          scopes: ['shared', 'api'],
+          schema: { command: ['no-such-validator'] },
+        },
+        web: { scopes: ['shared', 'web'] },
+      },
+    });
+    const runValidator = () => ({
+      error: Object.assign(new Error('spawn no-such-validator ENOENT'), {
+        code: 'ENOENT',
+      }),
+    });
+
+    expect(
+      validateProjection(
+        ctx,
+        { environment: 'staging', app: 'api', document: { api: {} } },
+        { runValidator },
+      ),
+    ).toEqual({
+      state: 'missing',
+      message: 'apps.api.schema.command "no-such-validator" was not found',
+    });
+  });
+
+  // ADR-0002. A validator that quotes the value it rejected (pydantic does)
+  // must not put that value in an audit report.
+  it('redacts every projected value out of what the command printed', () => {
+    const runValidator = () => ({
+      status: 1,
+      stdout: '',
+      stderr: 'DATABASE_URL: invalid, input_value=postgresql://real/db',
+    });
+    const outcome = validateProjection(CTX, target, { runValidator });
+
+    expect(outcome.message).toBe(
+      'DATABASE_URL: invalid, input_value=<redacted>',
+    );
+    expect(outcome.message).not.toContain('postgresql://real/db');
+  });
+
+  it('redacts the message of a could-not-run status as well', () => {
+    const runValidator = () => ({
+      status: COULD_NOT_RUN,
+      stdout: '',
+      stderr: 'cannot connect to postgresql://real/db',
+    });
+
+    expect(
+      validateProjection(CTX, target, { runValidator }).message,
+    ).not.toContain('postgresql://real/db');
+  });
+
+  it('caps what it reports', () => {
+    const runValidator = () => ({
+      status: 1,
+      stdout: '',
+      stderr: 'x'.repeat(5000),
+    });
+
+    expect(
+      validateProjection(CTX, target, { runValidator }).message.length,
+    ).toBeLessThan(600);
   });
 });
 
@@ -208,107 +286,85 @@ describe('schemaFindings', () => {
       severity: 'warn',
     });
   });
-});
 
-describe('runnerCommand', () => {
-  it('spawns node with tsx/cli, the .ts validator, the schema module and the export', () => {
-    const ctx = fixtureCtx();
-    const { command, args, cwd } = runnerCommand(ctx, { app: 'api' });
-
-    expect(command).toBe(process.execPath);
-    expect(args[0]).toMatch(/[\\/]tsx[\\/]/);
-    expect(args[1]).toMatch(/validate-projection\.ts$/);
-    expect(args[2]).toBe(join(ctx.root, 'apps/api/src/env.ts'));
-    expect(args[3]).toBe('parseApiEnv');
-    expect(cwd).not.toBe(ctx.root);
-  });
-
-  it('uses the .mjs twin without tsx for runner: node', () => {
-    const ctx = fixtureCtx({ schemaRunner: { runner: 'node', cwd: '.' } });
-    const { args, cwd } = runnerCommand(ctx, { app: 'web' });
-
-    expect(args[0]).toMatch(/validate-projection\.mjs$/);
-    expect(args).toHaveLength(3);
-    expect(cwd).toBe(ctx.root);
-  });
-
-  // A typo in schema.file must not disable the gate as a mere warning.
-  it('reports a configured schema file that does not exist as missing', () => {
-    const ctx = fixtureCtx({
-      apps: {
-        api: {
-          scopes: ['shared', 'api'],
-          schema: { file: 'apps/api/src/evn.ts', exportName: 'parseApiEnv' },
-        },
-        web: { scopes: ['shared', 'web'] },
-      },
-    });
-
-    expect(runnerCommand(ctx, { app: 'api' })).toEqual({
-      missing: 'apps/api/src/evn.ts',
-    });
-
-    const outcome = validateProjection(ctx, {
-      environment: 'production',
-      app: 'api',
-      document: { api: {} },
-    });
-    expect(outcome).toEqual({
+  it('is an error when the command is missing', () => {
+    const [finding] = schemaFindings('production', 'api', {
       state: 'missing',
-      message: expect.stringMatching(/apps\/api\/src\/evn\.ts/),
+      message: 'apps.api.schema.command "x" was not found',
     });
 
-    const [finding] = schemaFindings('production', 'api', outcome);
     expect(finding).toMatchObject({
       code: 'schema-missing',
       severity: 'error',
       scope: 'api',
       environment: 'production',
     });
-    expect(finding.message).toMatch(
-      /apps\.api\.schema\.file "apps\/api\/src\/evn\.ts" does not exist/,
+    expect(finding.message).toMatch(/Fix the command in secrets\.config\.mjs/);
+  });
+});
+
+describe('runnerCommand', () => {
+  it('splits the configured argv into a program and its arguments', () => {
+    const ctx = fixtureCtx();
+    const { command, args } = runnerCommand(ctx, { app: 'api' });
+
+    expect(command).toBe(process.execPath);
+    expect(args).toEqual([join(ctx.root, 'apps/api/validate-env.mjs')]);
+  });
+
+  // The default exists so a loader that reads dotenv from the working
+  // directory cannot add variables the store does not have.
+  it('runs from the OS temp directory unless told otherwise', () => {
+    const ctx = fixtureCtx();
+
+    expect(runnerCommand(ctx, { app: 'api' }).cwd).not.toBe(ctx.root);
+  });
+
+  it('resolves a configured cwd against the config root', () => {
+    const ctx = fixtureCtx({
+      apps: {
+        api: {
+          scopes: ['shared', 'api'],
+          schema: { command: ['validate'], cwd: 'apps/api' },
+        },
+        web: { scopes: ['shared', 'web'] },
+      },
+    });
+
+    expect(runnerCommand(ctx, { app: 'api' }).cwd).toBe(
+      join(ctx.root, 'apps/api'),
     );
   });
 
   it('is unavailable, not an error, when the app has no schema', () => {
     expect(runnerCommand(registryCtx({ api: [] }), { app: 'api' })).toEqual({
-      unavailable: 'apps.api.schema is not configured in secrets.config.mjs',
+      unavailable:
+        'apps.api.schema.command is not configured in secrets.config.mjs',
     });
   });
 
-  // Review Focus 3: tsx missing from the consumer root is a warning, never schema-invalid.
-  it('is unavailable when tsx cannot be resolved from the consumer root', () => {
-    const ctx = fixtureCtx();
-    const resolveFrom = () => {
-      throw Object.assign(new Error("Cannot find module 'tsx/cli'"), {
-        code: 'MODULE_NOT_FOUND',
-      });
-    };
-
-    expect(runnerCommand(ctx, { app: 'api' }, { resolveFrom })).toEqual({
-      unavailable: expect.stringMatching(
-        /tsx is not installed .*schemaRunner\.runner/,
-      ),
-    });
-    expect(
-      validateProjection(
-        ctx,
-        { environment: 'local', app: 'api', document: { api: {} } },
-        {
-          runValidator: (c, target) =>
-            defaultRunValidator(c, target, { resolveFrom }),
+  it('is unavailable when the app declares keys but no command', () => {
+    const ctx = fixtureCtx({
+      apps: {
+        api: {
+          scopes: ['shared', 'api'],
+          schema: { keys: 'apps/api/env.schema.json' },
         },
-      ),
-    ).toEqual({
-      state: 'unavailable',
-      message: expect.stringMatching(/tsx is not installed/),
+        web: { scopes: ['shared', 'web'] },
+      },
+    });
+
+    expect(runnerCommand(ctx, { app: 'api' })).toEqual({
+      unavailable:
+        'apps.api.schema.command is not configured in secrets.config.mjs',
     });
   });
 });
 
-// The spawn itself, against the real tsx and the fixture schemas. Every other
-// test injects the validator; without these the one part that talks to another
-// process is unexercised.
+// The spawn itself. Every test above injects the validator; without these the
+// one part that talks to another process is unexercised. The commands are
+// `node` only because CI has nothing else guaranteed: the runner reads an exit
+// status and two streams and cannot tell what language wrote them.
 describe('the real validator process', { timeout: 60_000 }, () => {
   const ctx = fixtureCtx();
   const good = {
@@ -320,24 +376,30 @@ describe('the real validator process', { timeout: 60_000 }, () => {
     web: {},
   };
 
-  it('accepts a projection its schema is happy with', () => {
-    expect(
-      validateProjection(ctx, {
-        environment: 'local',
-        app: 'api',
-        document: good,
-      }),
-    ).toEqual({ state: 'ok' });
-  });
-
-  it('reports the schema message for one it is not, without echoing the value', () => {
-    const outcome = validateProjection(ctx, {
+  /** The fixture's api app with a different command. */
+  const withCommand = (command) =>
+    fixtureCtx({
+      apps: {
+        api: { scopes: ['shared', 'api'], schema: { command } },
+        web: { scopes: ['shared', 'web'] },
+      },
+    });
+  const node = (script, ...args) => [process.execPath, '-e', script, ...args];
+  const run = (ctx_, document = good) =>
+    validateProjection(ctx_, {
       environment: 'local',
       app: 'api',
-      document: {
-        ...good,
-        api: { ...good.api, SERVICE_KEY_WEB: 'too-short' },
-      },
+      document,
+    });
+
+  it('accepts a projection its validator is happy with', () => {
+    expect(run(ctx)).toEqual({ state: 'ok' });
+  });
+
+  it('reports the validator message for one it is not, without echoing the value', () => {
+    const outcome = run(ctx, {
+      ...good,
+      api: { ...good.api, SERVICE_KEY_WEB: 'too-short' },
     });
 
     expect(outcome.state).toBe('invalid');
@@ -345,32 +407,11 @@ describe('the real validator process', { timeout: 60_000 }, () => {
     expect(outcome.message).not.toContain('too-short');
   });
 
-  it('does not echo a rejected enum value back', () => {
-    const canary = 'CANARY-must-not-appear';
-    const outcome = validateProjection(ctx, {
-      environment: 'local',
-      app: 'web',
-      document: {
-        shared: { LOG_LEVEL: canary },
-        api: {},
-        web: { API_URL: 'https://a.test', SERVICE_KEY: 'k'.repeat(32) },
-      },
-    });
-
-    expect(outcome.state).toBe('invalid');
-    expect(outcome.message).toContain('LOG_LEVEL');
-    expect(outcome.message).not.toContain(canary);
-  });
-
-  it('fires the object-level refine', () => {
+  it('fires the cross-variable check', () => {
     const same = 'same-value-same-value-same-value-1234';
-    const outcome = validateProjection(ctx, {
-      environment: 'local',
-      app: 'api',
-      document: {
-        ...good,
-        api: { DATABASE_URL: same, SERVICE_KEY_WEB: same },
-      },
+    const outcome = run(ctx, {
+      ...good,
+      api: { DATABASE_URL: same, SERVICE_KEY_WEB: same },
     });
 
     expect(outcome).toMatchObject({
@@ -379,55 +420,57 @@ describe('the real validator process', { timeout: 60_000 }, () => {
     });
   });
 
-  it('reports a missing export as unavailable, not invalid', () => {
-    const wrong = fixtureCtx({
-      apps: {
-        api: {
-          scopes: ['shared', 'api'],
-          schema: { file: 'apps/api/src/env.ts', exportName: 'parseNope' },
-        },
-        web: { scopes: ['shared', 'web'] },
-      },
-    });
+  it('hands the command the projection and the environment name', () => {
+    const script =
+      'process.exit(process.env.SOPS_ENVIRONMENT === "local" && process.env.DATABASE_URL === "postgresql://x/y" ? 0 : 3)';
 
-    expect(
-      validateProjection(wrong, {
-        environment: 'local',
-        app: 'api',
-        document: good,
-      }),
-    ).toMatchObject({
-      state: 'unavailable',
-      message: expect.stringMatching(/exports no "parseNope"/),
-    });
+    expect(run(withCommand(node(script)))).toEqual({ state: 'ok' });
   });
 
-  it('runs the .mjs twin for runner: node against a JS schema', () => {
-    // No zod needed for the twin's contract: any module exporting a parser works.
-    const js = fixtureCtx({
-      schemaRunner: { runner: 'node' },
-      apps: {
-        api: {
-          scopes: ['shared', 'api'],
-          schema: { file: 'apps/api/src/env-plain.mjs', exportName: 'parse' },
-        },
-        web: { scopes: ['shared', 'web'] },
-      },
-    });
-    expect(
-      validateProjection(js, {
-        environment: 'local',
-        app: 'api',
-        document: good,
-      }),
-    ).toEqual({ state: 'ok' });
-  });
+  it('does not let a variable from the parent shell satisfy the store', () => {
+    process.env.DATABASE_URL = 'postgresql://from-my-shell/db';
+    try {
+      const script =
+        'process.exit(process.env.DATABASE_URL === undefined ? 0 : 3)';
 
-  it('has no schema message that interpolates the value it rejected', () => {
-    for (const app of ctx.apps) {
-      const source = readFileSync(schemaFile(ctx, app), 'utf8');
-      expect([...source.matchAll(/message:\s*`[^`]*\$\{/g)], app).toEqual([]);
+      expect(run(withCommand(node(script)), { api: {} })).toEqual({
+        state: 'ok',
+      });
+    } finally {
+      delete process.env.DATABASE_URL;
     }
+  });
+
+  // The command is an argv, never a shell line: an argument with spaces and
+  // metacharacters arrives as one string.
+  it('passes arguments verbatim, with no shell in between', () => {
+    const script = 'process.exit(process.argv[1] === "a b;c && d" ? 0 : 3)';
+
+    expect(run(withCommand(node(script, 'a b;c && d')))).toEqual({
+      state: 'ok',
+    });
+  });
+
+  it('does not echo a value the validator itself quoted', () => {
+    const script =
+      'console.error("rejected " + process.env.DATABASE_URL); process.exit(1)';
+    const outcome = run(withCommand(node(script)));
+
+    expect(outcome.state).toBe('invalid');
+    expect(outcome.message).toBe('rejected <redacted>');
+  });
+
+  it('reads the could-not-run status as unavailable', () => {
+    expect(run(withCommand(node(`process.exit(${COULD_NOT_RUN})`))).state).toBe(
+      'unavailable',
+    );
+  });
+
+  it('reports a command that does not exist as missing', () => {
+    const outcome = run(withCommand(['sops-env-no-such-validator-xyz']));
+
+    expect(outcome.state).toBe('missing');
+    expect(outcome.message).toMatch(/sops-env-no-such-validator-xyz/);
   });
 
   it('refuses an unknown app before spawning anything', () => {

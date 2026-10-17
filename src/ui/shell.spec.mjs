@@ -1612,7 +1612,7 @@ describe('rowTone', () => {
   });
 
   // Nothing in the code says the app needs it, so nothing here says it is broken.
-  // `MONITORING_ORG` is the real case: used by a CLI, validated by no Zod schema.
+  // `MONITORING_ORG` is the real case: used by a CLI, validated by no schema.
   it('is yellow for a missing variable no schema declares', () => {
     const undeclared = { ...at('A_OPT'), schema: null };
 

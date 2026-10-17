@@ -253,7 +253,7 @@ describe('readDeclarations', () => {
     expect(api.DATABASE_URL.presence).toBe('required');
     expect(api.PROXY_HOPS).toEqual({
       presence: 'default',
-      defaultLiteral: "'false'",
+      defaultLiteral: 'false',
     });
   });
 });

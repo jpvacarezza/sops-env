@@ -84,13 +84,9 @@ export function resolveConfig(
   const environmentsConfig = raw.environments ?? DEFAULTS.environments;
   const environments = Object.keys(environmentsConfig);
   const store = { ...DEFAULTS.store, ...(raw.store ?? {}) };
-  const schemaRunner = {
-    ...DEFAULTS.schemaRunner,
-    ...(raw.schemaRunner ?? {}),
-  };
   const contract = { ...DEFAULTS.contract, ...(raw.contract ?? {}) };
   const exemptions = {
-    unparsedBySchema: { ...(raw.exemptions?.unparsedBySchema ?? {}) },
+    undeclared: { ...(raw.exemptions?.undeclared ?? {}) },
     platformProvided: { ...(raw.exemptions?.platformProvided ?? {}) },
     derived: { ...(raw.exemptions?.derived ?? {}) },
   };
@@ -124,7 +120,13 @@ export function resolveConfig(
           dotenv: entry.dotenv ?? APP_DEFAULTS.dotenv(name),
           example: entry.example ?? APP_DEFAULTS.example(name),
           schema: entry.schema
-            ? { file: entry.schema.file, exportName: entry.schema.exportName }
+            ? {
+                keys: entry.schema.keys ?? null,
+                command: entry.schema.command
+                  ? [...entry.schema.command]
+                  : null,
+                cwd: entry.schema.cwd ?? APP_DEFAULTS.schemaCwd,
+              }
             : null,
           destination,
         },
@@ -149,7 +151,7 @@ export function resolveConfig(
     app,
     exemptions,
     notDriftWhenUnset: {
-      ...exemptions.unparsedBySchema,
+      ...exemptions.undeclared,
       ...exemptions.derived,
       ...exemptions.platformProvided,
     },
@@ -161,7 +163,6 @@ export function resolveConfig(
     publicPrefixes: [...(raw.publicPrefixes ?? DEFAULTS.publicPrefixes)],
     placeholderPattern: raw.placeholderPattern ?? DEFAULTS.placeholderPattern,
     store: { ...store, tracked: [...store.tracked] },
-    schemaRunner: { ...schemaRunner, conditions: [...schemaRunner.conditions] },
     contract: {
       sourceRoots: [...contract.sourceRoots],
       extraFiles: [...contract.extraFiles],

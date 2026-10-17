@@ -66,8 +66,8 @@ describe('the public API', () => {
       'readSchemaKeys',
       'render',
       'resolveConfig',
-      'schemaFile',
       'schemaFindings',
+      'schemaKeysFile',
       'validateProjection',
     ]);
   });

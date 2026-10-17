@@ -13,7 +13,10 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 
 import { decryptSecretsFile } from '../store/decrypt.mjs';
-import { readSchemaDeclarations, schemaFile } from '../model/env-contract.mjs';
+import {
+  readSchemaDeclarations,
+  schemaKeysFile,
+} from '../model/env-contract.mjs';
 import { readEnvironment } from '../store/inventory.mjs';
 import {
   checkPairs,
@@ -64,11 +67,11 @@ export function parseListArgs(ctx, argv) {
   };
 }
 
-/** Schema declarations per app that has a schema, read as text. Never imported — see env-contract. */
+/** Schema declarations per app that has a schema keys file. A manifest of names: never run, never used to judge a value. */
 export function readDeclarations(ctx, { readFile = readFileSync } = {}) {
   return Object.fromEntries(
     ctx.apps
-      .map((app) => [app, schemaFile(ctx, app)])
+      .map((app) => [app, schemaKeysFile(ctx, app)])
       .filter(([, file]) => file !== null)
       .map(([app, file]) => [
         app,

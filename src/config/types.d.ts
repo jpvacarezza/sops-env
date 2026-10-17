@@ -4,9 +4,23 @@ export interface AppConfig {
   scopes: string[];
   dotenv?: string;
   example?: string;
-  schema?: { file: string; exportName: string } | null;
+  schema?: AppSchema | null;
   destination?:
     ({ provider: string | Provider } & Record<string, unknown>) | null;
+}
+
+/**
+ * How an app is checked. At least one of `keys` and `command`.
+ *
+ * `keys` is a JSON Schema document read only for the variable names it declares
+ * (`properties`, `required`, `default`); it never judges a value. `command` is
+ * the app's own validator, an argv run without a shell with the projection in
+ * its environment: exit 0 valid, exit 78 could not run, anything else invalid.
+ */
+export interface AppSchema {
+  keys?: string;
+  command?: string[];
+  cwd?: string;
 }
 
 export interface Pair {
@@ -41,15 +55,10 @@ export interface SecretsConfig {
   environments?: Record<string, { nodeEnv: string; sync: boolean }>;
   scopes: Record<string, { keys: Record<string, Note> }>;
   apps: Record<string, AppConfig>;
-  schemaRunner?: {
-    runner?: 'tsx' | 'node';
-    conditions?: string[];
-    cwd?: string;
-  };
   publicPrefixes?: string[];
   pairs?: Pair[];
   exemptions?: {
-    unparsedBySchema?: Record<string, string>;
+    undeclared?: Record<string, string>;
     platformProvided?: Record<string, string>;
     derived?: Record<string, string>;
   };
@@ -75,13 +84,18 @@ export interface Ctx {
   readonly app: Readonly<
     Record<
       string,
-      Required<Omit<AppConfig, 'destination'>> & {
+      Required<Omit<AppConfig, 'destination' | 'schema'>> & {
+        schema: {
+          keys: string | null;
+          command: readonly string[] | null;
+          cwd: string;
+        } | null;
         destination: ({ provider: string } & Record<string, unknown>) | null;
       }
     >
   >;
   readonly exemptions: {
-    unparsedBySchema: Record<string, string>;
+    undeclared: Record<string, string>;
     platformProvided: Record<string, string>;
     derived: Record<string, string>;
   };
@@ -94,11 +108,6 @@ export interface Ctx {
     file: string;
     sopsConfig: string;
     tracked: readonly string[];
-  };
-  readonly schemaRunner: {
-    runner: 'tsx' | 'node';
-    conditions: readonly string[];
-    cwd: string;
   };
   readonly contract: {
     sourceRoots: readonly string[];

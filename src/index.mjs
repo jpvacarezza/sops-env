@@ -18,7 +18,7 @@ export {
   readExampleKeys,
   readSchemaDeclarations,
   readSchemaKeys,
-  schemaFile,
+  schemaKeysFile,
 } from './model/env-contract.mjs';
 export {
   checkPairs,

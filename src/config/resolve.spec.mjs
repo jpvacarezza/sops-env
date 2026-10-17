@@ -48,11 +48,7 @@ describe('resolveConfig', () => {
       sopsConfig: '.sops.yaml',
       tracked: ['README.md', 'STAGING-PROD-CHECKLIST.md'],
     });
-    expect(ctx.schemaRunner).toEqual({
-      runner: 'tsx',
-      conditions: [],
-      cwd: 'tmp',
-    });
+    expect(ctx.schemaRunner).toBeUndefined();
     expect(ctx.contract.sourceRoots).toEqual(['apps/*/src']);
     expect(ctx.providerConfig.vercel.token).toBe('VERCEL_TOKEN');
     expect(ctx.root).toBe(ROOT);
@@ -88,7 +84,7 @@ describe('resolveConfig', () => {
     const ctx = resolve({
       ...minimal(),
       exemptions: {
-        unparsedBySchema: { A: 'a' },
+        undeclared: { A: 'a' },
         platformProvided: { B: 'b' },
         derived: { C: 'c' },
       },
@@ -196,13 +192,75 @@ describe('resolveConfig', () => {
     );
   });
 
-  it('refuses a schema entry without file and exportName', () => {
+  it('resolves a schema to its keys file, command argv and a default cwd', () => {
     const raw = minimal();
-    raw.apps.api.schema = { file: 'apps/api/src/env.ts' };
+    raw.apps.api.schema = {
+      keys: 'apps/api/env.schema.json',
+      command: ['python', '-m', 'api.config'],
+    };
+
+    expect(resolve(raw).app.api.schema).toEqual({
+      keys: 'apps/api/env.schema.json',
+      command: ['python', '-m', 'api.config'],
+      cwd: 'tmp',
+    });
+  });
+
+  it('accepts a schema with only a command, or only a keys file', () => {
+    const onlyCommand = minimal();
+    onlyCommand.apps.api.schema = { command: ['validate'] };
+    const onlyKeys = minimal();
+    onlyKeys.apps.api.schema = { keys: 'env.schema.json' };
+
+    expect(resolve(onlyCommand).app.api.schema).toMatchObject({
+      keys: null,
+      command: ['validate'],
+    });
+    expect(resolve(onlyKeys).app.api.schema).toMatchObject({
+      keys: 'env.schema.json',
+      command: null,
+    });
+  });
+
+  it('refuses a schema that gives neither a keys file nor a command', () => {
+    const raw = minimal();
+    raw.apps.api.schema = {};
 
     expect(() => resolve(raw)).toThrow(
-      /apps\.api\.schema\.exportName: required/,
+      /apps\.api\.schema: give a keys file, a command, or both/,
     );
+  });
+
+  it.each([
+    ['a string', 'python -m api'],
+    ['an empty array', []],
+    ['an array with a non-string', ['python', 1]],
+    ['an array with an empty part', ['python', '']],
+  ])('refuses a command that is %s', (_label, command) => {
+    const raw = minimal();
+    raw.apps.api.schema = { command };
+
+    expect(() => resolve(raw)).toThrow(
+      /apps\.api\.schema\.command: must be a non-empty array of strings/,
+    );
+  });
+
+  it('says what replaced file and exportName', () => {
+    const raw = minimal();
+    raw.apps.api.schema = { file: 'apps/api/src/env.ts', exportName: 'parse' };
+
+    expect(() => resolve(raw)).toThrow(
+      /apps\.api\.schema: `file` and `exportName` were replaced by `command`/,
+    );
+  });
+
+  it('says what replaced schemaRunner and unparsedBySchema', () => {
+    expect(() => resolve({ ...minimal(), schemaRunner: {} })).toThrow(
+      /schemaRunner: was removed; put the validator in apps\.<app>\.schema\.command/,
+    );
+    expect(() =>
+      resolve({ ...minimal(), exemptions: { unparsedBySchema: {} } }),
+    ).toThrow(/exemptions\.unparsedBySchema: was renamed to `undeclared`/);
   });
 
   it('normalises an inline provider object to its name and registers it', () => {
@@ -339,7 +397,7 @@ describe('resolveConfig: names-only guard beyond scope notes', () => {
     expect(() => resolve(raw)).toThrow(/pairs\[0\]\.why: contains "="/);
   });
 
-  it.each(['unparsedBySchema', 'platformProvided', 'derived'])(
+  it.each(['undeclared', 'platformProvided', 'derived'])(
     'runs the note guard over exemptions.%s reasons',
     (group) => {
       const raw = {

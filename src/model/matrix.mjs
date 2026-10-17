@@ -2,7 +2,7 @@
  * Crosses the four things that describe a variable into one grid.
  *
  * The sources are the scope registry, what each ciphertext file actually
- * declares, and how each app's Zod schema declares it. `env-contract.spec.mjs`
+ * declares, and how each app's schema keys file declares it. `env-contract.spec.mjs`
  * already compares those lists by *name* and passes today — while
  * `BETTER_AUTH_URL_ADMIN`, required with no default, is set in `local` and
  * missing from staging and production. Name parity cannot see that, because it

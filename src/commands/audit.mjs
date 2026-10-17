@@ -43,7 +43,7 @@ export const usage = (
   ctx,
 ) => `Usage: sops-env audit [--no-schema] [environment...]
 
-  --no-schema   Skip the Zod pass, which spawns one tsx process per app.
+  --no-schema   Skip the schema pass, which runs each app's validator command.
 
 Exits non-zero when anything is wrong. Environments default to:
 ${ctx.environments.join(', ')}.`;
@@ -132,8 +132,9 @@ export function auditEnvironments(
 
   if (withSchema) {
     notes.push(
-      'The Zod pass assumes NODE_ENV matches the environment name, because the ' +
-        'store sets it nowhere and the platform does.',
+      'The schema pass sets SOPS_ENVIRONMENT to the environment name and NODE_ENV ' +
+        'from the environment config, because the store sets neither and the ' +
+        'platform does.',
     );
   }
   notes.push(
