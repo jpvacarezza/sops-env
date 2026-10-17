@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.3.0 — 2026-10-17
+
 - **Breaking:** the schema pass of `audit` no longer imports a Zod module. An
   app's `schema` is now `{ keys?, command?, cwd? }`: `command` is the app's own
   validator, an argv run without a shell in any language (exit `0` valid, `78`
