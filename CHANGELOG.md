@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.2.2 — 2026-10-16
+
 - The grid's side pane is no longer cut at the grid's height: when it is taller
   than the rows beside it, the footer moves down to make room, as far as the
   terminal has rows. The "more than this terminal has room for" line now only
