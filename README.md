@@ -5,14 +5,14 @@ SOPS + age secrets for a monorepo. A config file is the registry of which variab
 ## Install
 
 ```sh
-pnpm add -D github:jpvacarezza/sops-env#v0.2.1
+pnpm add -D github:jpvacarezza/sops-env#v0.3.0
 ```
 
 Not published on npm. Requires Node >= 24 and `sops` >= 3.11.0 with an age key on the machine. The optional schema pass of `audit` runs your own validator command, in any language (see [Schema validation](#schema-validation)).
 
 ## Versioning
 
-Pin a tag in `package.json` (`"sops-env": "github:jpvacarezza/sops-env#v0.2.1"`). pnpm records the commit SHA in the lockfile, and `--frozen-lockfile` is what holds that pin.
+Pin a tag in `package.json` (`"sops-env": "github:jpvacarezza/sops-env#v0.3.0"`). pnpm records the commit SHA in the lockfile, and `--frozen-lockfile` is what holds that pin.
 
 ## Configure
 
