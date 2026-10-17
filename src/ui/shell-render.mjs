@@ -473,7 +473,8 @@ export function elide(text, width) {
  *
  * Takes the visible slice as an argument rather than computing it, so the caller
  * owns how much of the terminal it is willing to spend — `viewport` in
- * `screen.mjs` decides that from `process.stdout.rows`.
+ * `screen.mjs` decides that from `process.stdout.rows`. `height` is that same
+ * terminal height, so a side pane taller than the grid knows how far it may grow.
  */
 export function renderShell(
   state,
@@ -482,6 +483,7 @@ export function renderShell(
     counts = { error: 0, warn: 0 },
     slice = null,
     columns = undefined,
+    height = undefined,
     cellNote = null,
     cellValue = null,
     colors = false,
@@ -687,9 +689,16 @@ export function renderShell(
   );
 
   if (pane.side > 0 && row) {
-    beside(lines, renderSide(state, row, meta, cellValue, pane.side, colors), {
+    const block = renderSide(state, row, meta, cellValue, pane.side, colors);
+    // A pane taller than the grid pushes the footer down instead of being cut
+    // short, as far as the terminal has rows; `beside` counts what still misses.
+    const wanted = Math.max(0, block.length - (chromeAt - headAt));
+    const spare = height === undefined ? wanted : height - 1 - lines.length;
+    const extra = Math.min(wanted, Math.max(0, spare));
+    lines.splice(chromeAt, 0, ...Array(extra).fill(''));
+    beside(lines, block, {
       at: headAt,
-      until: chromeAt,
+      until: chromeAt + extra,
       grid,
       width: pane.side,
       colors,

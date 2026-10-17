@@ -981,6 +981,20 @@ describe('the pane at the side', () => {
     expect(out.slice(legend).join(' ')).not.toContain('api.A_REQ');
   });
 
+  // The grid here has four rows; the pane wants more than that once it carries
+  // a value under each environment. It grows past the grid, down to the footer's
+  // new place, and only says it is cut when the terminal is out of rows.
+  it('grows past a short grid to draw the whole pane', () => {
+    const short = press(start(), 'right').state;
+    const options = { cellValue: () => 'value' };
+
+    expect(drawn(short, { ...options, height: 60 })).not.toContain('more than');
+    expect(drawn(short, { ...options })).not.toContain('more than');
+    expect(drawn(short, { ...options, height: 12 })).toContain(
+      'more than this terminal has room for',
+    );
+  });
+
   it('lines the pane title up with the column header', () => {
     const withPane = renderShell(opened(), wide);
     const head = withPane.findIndex((line) => line.includes('Variable'));
@@ -1093,9 +1107,10 @@ describe('the pane at the side', () => {
     expect(shown).not.toContain('DEVELOPMENT');
   });
 
-  it('counts what it had to leave out', () => {
+  it('counts what it had to leave out when the terminal is out of rows', () => {
     const shown = renderShell(opened(), {
       ...wide,
+      height: 12,
       slice: { start: 0, size: 1, scrolled: true },
     }).join(' ');
 
