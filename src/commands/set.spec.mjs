@@ -184,7 +184,7 @@ describe('writeCell', () => {
   });
 
   // sops reports success for a value it coerced, and a silent type change
-  // surfaces much later as a Zod failure at boot.
+  // surfaces much later as a validation failure at boot.
   it('fails when the value does not read back as written', () => {
     const sops = fakeSops();
     const liar = {

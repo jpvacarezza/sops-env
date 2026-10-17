@@ -11,25 +11,26 @@ import {
   readExampleKeys,
   readSchemaDeclarations,
   readSchemaKeys,
-  schemaFile,
+  schemaKeysFile,
 } from './env-contract.mjs';
 
+const schema = (document) => JSON.stringify(document);
+
 /**
- * Unit tests for the three extractors. The parity assertions they feed live
- * below; these exist because all three are regexes over source text, and a
- * regex that quietly stops matching turns every assertion downstream into a
- * comparison of two empty sets — green, and worthless.
+ * Unit tests for the extractors. A reader that quietly finds nothing turns every
+ * assertion downstream into a comparison of two empty sets — green, and worthless.
  */
 describe('readSchemaKeys', () => {
-  it('reads keys off a zod object, including multi-line entries', () => {
-    const source = `
-const EnvSchema = z.object({
-  PORT: z.coerce.number().default(6003),
-  DATABASE_URL: z
-    .string()
-    .min(1),
-  LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
-});`;
+  it('reads the names a JSON Schema document declares, in order', () => {
+    const source = schema({
+      type: 'object',
+      properties: {
+        PORT: { type: 'string', default: '6003' },
+        DATABASE_URL: { type: 'string', minLength: 1 },
+        LOG_LEVEL: { type: 'string' },
+      },
+    });
+
     expect(readSchemaKeys(source)).toEqual([
       'PORT',
       'DATABASE_URL',
@@ -38,20 +39,40 @@ const EnvSchema = z.object({
   });
 
   it('throws rather than reporting an empty schema', () => {
-    // The failure mode this guards: someone reshapes a schema, the regex stops
-    // matching, and every parity assertion passes against nothing.
-    expect(() => readSchemaKeys('const x = 1;')).toThrow(/no keys/i);
+    // The failure mode this guards: a document with no `properties` passes
+    // every parity assertion against nothing.
+    expect(() => readSchemaKeys(schema({ type: 'object' }))).toThrow(
+      /no `properties`/,
+    );
+    expect(() => readSchemaKeys(schema({ properties: {} }))).toThrow(
+      /no `properties`/,
+    );
+    expect(() => readSchemaKeys(schema({ properties: [] }))).toThrow(
+      /no `properties`/,
+    );
+  });
+
+  it('throws on a document that is not JSON, naming the file kind', () => {
+    expect(() => readSchemaKeys('const x = 1;')).toThrow(/not valid JSON/);
+  });
+
+  it('refuses a name that is not an environment variable', () => {
+    expect(() =>
+      readSchemaKeys(schema({ properties: { databaseUrl: {} } })),
+    ).toThrow(/"databaseUrl".*UPPER_SNAKE_CASE/);
   });
 });
 
 describe('readSchemaDeclarations', () => {
   it('tells required, defaulted and optional apart', () => {
-    const source = `
-const EnvSchema = z.object({
-  DATABASE_URL: z.string().min(1),
-  PORT: z.coerce.number().default(6003),
-  MONITORING_DSN: z.string().url().optional(),
-});`;
+    const source = schema({
+      properties: {
+        DATABASE_URL: { type: 'string' },
+        PORT: { type: 'string', default: '6003' },
+        MONITORING_DSN: { type: 'string' },
+      },
+      required: ['DATABASE_URL'],
+    });
 
     expect(readSchemaDeclarations(source)).toEqual({
       DATABASE_URL: { presence: 'required', defaultLiteral: null },
@@ -60,105 +81,51 @@ const EnvSchema = z.object({
     });
   });
 
-  // Several entries describe a default in prose that they do not declare —
-  // SWAGGER_ENABLED's JSDoc says "Default false." A reader that counts those
-  // marks a required variable as safely defaulted, which is the wrong way round.
-  it('does not read a default out of a comment', () => {
-    const source = `
-const EnvSchema = z.object({
-  /** Default false. Production cannot opt in. */
-  // .default('nope')
-  SWAGGER_ENABLED: z.enum(['true', 'false']),
-});`;
+  it('reads a variable that is not listed in required as optional', () => {
+    const source = schema({ properties: { A: {}, B: {} }, required: ['A'] });
 
-    expect(readSchemaDeclarations(source).SWAGGER_ENABLED.presence).toBe(
-      'required',
-    );
+    expect(readSchemaDeclarations(source).B.presence).toBe('optional');
   });
 
-  it('elides a computed default rather than showing half of it', () => {
-    const source = `
-const EnvSchema = z.object({
-  ORIGINS: z.string().default(defaultOrigins()),
-});`;
+  // A variable with a default is never missing, so listing it in `required`
+  // as well must not turn it back into a missing-required error.
+  it('lets a default win over required', () => {
+    const source = schema({
+      properties: { PROXY_HOPS: { default: 'false' } },
+      required: ['PROXY_HOPS'],
+    });
 
-    expect(readSchemaDeclarations(source).ORIGINS).toEqual({
+    expect(readSchemaDeclarations(source).PROXY_HOPS).toEqual({
       presence: 'default',
-      defaultLiteral: null,
+      defaultLiteral: 'false',
     });
   });
 
   it('reads an empty-string default, which is not the same as no default', () => {
-    const source = `
-const EnvSchema = z.object({
-  ENABLED_COUNTRIES: z.string().default(''),
-});`;
+    const source = schema({
+      properties: { ENABLED_COUNTRIES: { default: '' } },
+    });
 
     expect(readSchemaDeclarations(source).ENABLED_COUNTRIES).toEqual({
       presence: 'default',
-      defaultLiteral: "''",
+      defaultLiteral: '',
     });
   });
 
-  // The last entry is bounded by the object's closing brace, because
-  // apps/api/src/config/env.ts chains object-level refinements after it.
-  it('does not let the last key absorb a trailing refinement', () => {
-    const source = `
-const EnvSchema = z
-  .object({
-    A: z.string(),
-    B: z.string(),
-  })
-  .refine((data) => data.A !== data.B, { message: 'must differ' })
-  .refine((data) => Boolean(data.A), { path: ['A'] });`;
-
-    expect(readSchemaDeclarations(source).B).toEqual({
-      presence: 'required',
-      defaultLiteral: null,
+  it('shows a non-string default as JSON text', () => {
+    const source = schema({
+      properties: { PORT: { default: 6003 }, ORIGINS: { default: ['a', 'b'] } },
     });
-  });
+    const declarations = readSchemaDeclarations(source);
 
-  // The boundary is brace-matched, not "the first line starting with `})`".
-  // That shortcut read PROXY_HOPS correctly only because `.default()` came
-  // before its `.transform()`; reordering flipped it to `required`, and a
-  // defaulted variable then reported as a missing-required error per environment.
-  it('finds the default when a transform closes a brace before the object does', () => {
-    const source = `
-const EnvSchema = z
-  .object({
-    PROXY_HOPS: z
-      .union([z.literal('false'), z.coerce.number()])
-      .default('false')
-      .transform((value) => {
-        return value === 'false' ? false : value;
-      }),
-  })
-  .refine(() => true);`;
-
-    expect(readSchemaDeclarations(source).PROXY_HOPS).toEqual({
-      presence: 'default',
-      defaultLiteral: "'false'",
-    });
-  });
-
-  it('still finds it when the transform comes first', () => {
-    const source = `
-const EnvSchema = z
-  .object({
-    PROXY_HOPS: z
-      .union([z.literal('false'), z.coerce.number()])
-      .transform((value) => {
-        return value === 'false' ? false : value;
-      })
-      .default('false'),
-  })
-  .refine(() => true);`;
-
-    expect(readSchemaDeclarations(source).PROXY_HOPS.presence).toBe('default');
+    expect(declarations.PORT.defaultLiteral).toBe('6003');
+    expect(declarations.ORIGINS.defaultLiteral).toBe('["a","b"]');
   });
 
   it('throws rather than reporting every variable as unvalidated', () => {
-    expect(() => readSchemaDeclarations('const x = 1;')).toThrow(/no keys/i);
+    expect(() => readSchemaDeclarations(schema({ type: 'object' }))).toThrow(
+      /no `properties`/,
+    );
   });
 });
 
@@ -200,10 +167,10 @@ if (process.env.VERCEL_ENV !== 'production') {}
   });
 
   /**
-   * Not hypothetical: `apps/web/src/env.schema.ts` explains in a JSDoc block
-   * why `process.env.NEXT_PUBLIC_X` cannot be routed through a parser, and
-   * `instrumentation-client.ts` says the same about `process.env.NEXT_PUBLIC_*`.
-   * Counting prose would report two variables that do not exist, forever.
+   * Not hypothetical: a JSDoc block explains why `process.env.NEXT_PUBLIC_X`
+   * cannot be routed through a parser, and `instrumentation-client.ts` says the
+   * same about `process.env.NEXT_PUBLIC_*`. Counting prose would report two
+   * variables that do not exist, forever.
    */
   it('ignores reads that appear inside comments', () => {
     const source = `
@@ -228,12 +195,7 @@ describe('productionSourceFiles', () => {
     const ctx = fixtureCtx();
     const files = productionSourceFiles(ctx).map((file) => ctx.relative(file));
 
-    expect(files).toEqual([
-      'apps/api/src/env-plain.mjs',
-      'apps/api/src/env.ts',
-      'apps/web/src/env.schema.ts',
-      'apps/web/src/uses-env.ts',
-    ]);
+    expect(files).toEqual(['apps/web/src/uses-env.ts']);
   });
 
   it('expands a * segment and adds extraFiles that exist', () => {
@@ -250,12 +212,44 @@ describe('productionSourceFiles', () => {
   });
 });
 
-describe('schemaFile and exampleFile', () => {
-  it('resolve from the app config, and schemaFile is null when unconfigured', () => {
+describe('schemaKeysFile and exampleFile', () => {
+  it('resolve from the app config, and schemaKeysFile is null when unconfigured', () => {
     const ctx = fixtureCtx();
-    expect(ctx.relative(schemaFile(ctx, 'api'))).toBe('apps/api/src/env.ts');
+    expect(ctx.relative(schemaKeysFile(ctx, 'api'))).toBe(
+      'apps/api/env.schema.json',
+    );
     expect(ctx.relative(exampleFile(ctx, 'web'))).toBe('apps/web/.env.example');
-    expect(schemaFile(registryCtx({ api: [] }), 'api')).toBeNull();
+    expect(schemaKeysFile(registryCtx({ api: [] }), 'api')).toBeNull();
+  });
+
+  it('is null for an app that has a command but no keys file', () => {
+    const ctx = fixtureCtx({
+      apps: {
+        api: { scopes: ['shared', 'api'], schema: { command: ['validate'] } },
+        web: { scopes: ['shared', 'web'] },
+      },
+    });
+
+    expect(schemaKeysFile(ctx, 'api')).toBeNull();
+  });
+});
+
+describe('the fixture schema keys files', () => {
+  // The parity assertion the fixture can make on its own: each keys file names
+  // exactly what its app's scopes register, minus what the config exempts.
+  it('declare variables the registry knows', () => {
+    const ctx = fixtureCtx();
+
+    for (const app of ctx.apps) {
+      const source = readFileSync(schemaKeysFile(ctx, app), 'utf8');
+      const registered = new Set(
+        ctx.appScopes[app].flatMap((s) => ctx.registry[s]),
+      );
+
+      for (const key of readSchemaKeys(source)) {
+        expect(registered.has(key), `${app}.${key}`).toBe(true);
+      }
+    }
   });
 });
 

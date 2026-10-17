@@ -1,12 +1,16 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 
-import { schemaFile } from '../model/env-contract.mjs';
+import { redact } from '../providers/redact.mjs';
 import { projectEnv } from '../store/project.mjs';
+
+/**
+ * Exit status a validator uses to say "I could not run", as opposed to "the
+ * environment is wrong". `EX_CONFIG` from `sysexits.h`. Any other non-zero
+ * status is a verdict about the store.
+ */
+export const COULD_NOT_RUN = 78;
 
 /**
  * The environment the child gets: this process's, minus every variable the
@@ -25,95 +29,47 @@ export function childEnvironment(
   const inherited = Object.fromEntries(
     Object.entries(base).filter(([key]) => !known.has(key)),
   );
-  // `schemaRunner.conditions` maps workspace packages to their sources, so
-  // nothing has to be built first. Passed through NODE_OPTIONS because tsx owns
-  // its own argv, and appended rather than assigned so a developer's own flags
-  // survive.
-  const conditions = ctx.schemaRunner.conditions.map(
-    (condition) => `--conditions=${condition}`,
-  );
-  const nodeOptions = [base.NODE_OPTIONS, ...conditions]
-    .filter(Boolean)
-    .join(' ');
 
   return {
     ...inherited,
-    // The platform sets NODE_ENV, the store does not, so the schema's
-    // production-only refinements would be silently disarmed without this. A
-    // NODE_ENV in the store still wins.
+    // The platform sets NODE_ENV, the store does not, so production-only
+    // refinements would be silently disarmed without this. A NODE_ENV in the
+    // store still wins.
     NODE_ENV: ctx.nodeEnv[environment] ?? 'development',
+    // The same fact for an app that has no use for NODE_ENV.
+    SOPS_ENVIRONMENT: environment,
     ...projection,
-    ...(nodeOptions ? { NODE_OPTIONS: nodeOptions } : {}),
   };
 }
-
-// createRequire resolves from `<root>/node_modules` and then every parent
-// directory, as Node does, so a hoisted install above the consumer root is found.
-const defaultResolveFrom = (root, specifier) =>
-  createRequire(join(root, 'package.json')).resolve(specifier);
 
 /**
- * What to spawn for one app, or why nothing can be. `tsx` is resolved from the
- * CONSUMER root: pnpm does not guarantee a peer is visible from this package's
- * own directory. A missing tool is `unavailable`, never a verdict about the store.
- * A configured schema file that does not exist is `missing`: a typo there would
- * otherwise disable the gate behind a warning.
+ * What to spawn for one app, or why nothing can be. The command is an argv
+ * array and is never run through a shell, so it is whatever the app uses to
+ * validate itself: a Python module, a Go binary, a Node script.
+ *
+ * `cwd` defaults to the OS temp directory: somewhere with no `.env` files, so a
+ * loader that reads dotenv from the working directory cannot add variables the
+ * store does not have.
  */
-export function runnerCommand(
-  ctx,
-  { app },
-  { resolveFrom = defaultResolveFrom } = {},
-) {
-  const module = schemaFile(ctx, app);
-  if (!module)
+export function runnerCommand(ctx, { app }) {
+  const { command, cwd } = ctx.app[app].schema ?? {};
+  if (!command) {
     return {
-      unavailable: `apps.${app}.schema is not configured in secrets.config.mjs`,
-    };
-  const { exportName, file } = ctx.app[app].schema;
-  if (!existsSync(module)) return { missing: file };
-  const cwd =
-    ctx.schemaRunner.cwd === 'tmp'
-      ? tmpdir()
-      : resolve(ctx.root, ctx.schemaRunner.cwd);
-
-  if (ctx.schemaRunner.runner === 'node') {
-    return {
-      command: process.execPath,
-      args: [
-        fileURLToPath(new URL('./validate-projection.mjs', import.meta.url)),
-        module,
-        exportName,
-      ],
-      cwd,
+      unavailable: `apps.${app}.schema.command is not configured in secrets.config.mjs`,
     };
   }
 
-  let tsx;
-  try {
-    tsx = resolveFrom(ctx.root, 'tsx/cli');
-  } catch {
-    return {
-      unavailable: `tsx is not installed in ${ctx.root}; add it as a devDependency, or set schemaRunner.runner to "node" for JS-only schemas`,
-    };
-  }
+  const [file, ...args] = command;
   return {
-    command: process.execPath,
-    args: [
-      tsx,
-      fileURLToPath(new URL('./validate-projection.ts', import.meta.url)),
-      module,
-      exportName,
-    ],
-    cwd,
+    command: file,
+    args,
+    cwd: cwd === 'tmp' ? tmpdir() : resolve(ctx.root, cwd),
   };
 }
 
-export function defaultRunValidator(ctx, { app, env }, options = {}) {
-  const plan = runnerCommand(ctx, { app }, options);
+export function defaultRunValidator(ctx, { app, env }) {
+  const plan = runnerCommand(ctx, { app });
   if (plan.unavailable) return { unavailable: plan.unavailable };
-  if (plan.missing) return { missing: plan.missing };
-  // Somewhere with no .env files by default: a loader that calls dotenv on paths
-  // relative to the CWD would otherwise add variables the store does not have.
   return spawnSync(plan.command, plan.args, {
     encoding: 'utf8',
     env,
@@ -122,7 +78,14 @@ export function defaultRunValidator(ctx, { app, env }, options = {}) {
   });
 }
 
-/** Run one app's schema over its projection of one environment. */
+/**
+ * Run one app's validator command over its projection of one environment.
+ *
+ * The contract is the exit status: 0 is valid, `COULD_NOT_RUN` is "this tool is
+ * broken, say nothing about the store", anything else is invalid. What the
+ * command printed becomes the message, and it is redacted first: a validator
+ * that quotes the value it rejected must not put that value in an audit report.
+ */
 export function validateProjection(
   ctx,
   { environment, app, document },
@@ -133,42 +96,45 @@ export function validateProjection(
     app,
     env: childEnvironment(ctx, projection, { environment }),
   });
+  const values = Object.values(projection);
+  const printed = () =>
+    redact((result.stderr || result.stdout || '').trim(), values);
 
   if (result.unavailable)
     return { state: 'unavailable', message: result.unavailable };
-  if (result.missing)
-    return {
-      state: 'missing',
-      message: `apps.${app}.schema.file ${JSON.stringify(result.missing)} does not exist (relative to the config file)`,
-    };
+
   if (result.error) {
+    // A command that does not exist is a typo in the config. Reporting it as
+    // "unchecked" would let that typo switch the gate off behind a warning.
+    if (result.error.code === 'ENOENT') {
+      return {
+        state: 'missing',
+        message: `apps.${app}.schema.command ${JSON.stringify(ctx.app[app].schema?.command?.[0])} was not found`,
+      };
+    }
     return {
       state: 'unavailable',
-      message: `Could not run the validator: ${result.error.message}`,
+      message: `Could not run the validator: ${redact(result.error.message, values)}`,
     };
   }
 
-  let parsed;
-  try {
-    parsed = JSON.parse(result.stdout);
-  } catch {
+  if (result.status === null) {
     return {
       state: 'unavailable',
-      message:
-        'The validator printed no verdict. stderr: ' +
-        `${(result.stderr || '').trim().split('\n').slice(-3).join(' ')}`,
+      message: `The validator was terminated by ${result.signal ?? 'a signal'}`,
     };
   }
 
-  if (parsed.ok) return { state: 'ok' };
+  if (result.status === 0) return { state: 'ok' };
 
   // A validator that could not load its own subject has said nothing about the
   // store. Reporting that as `invalid` would read as "production's config is
   // wrong" when the truth is "this tool is broken", which is a worse error than
   // no error at all.
-  return parsed.kind === 'load'
-    ? { state: 'unavailable', message: parsed.message }
-    : { state: 'invalid', message: parsed.message };
+  const message = printed() || `exited with status ${result.status}`;
+  return result.status === COULD_NOT_RUN
+    ? { state: 'unavailable', message }
+    : { state: 'invalid', message };
 }
 
 export function schemaFindings(environment, app, outcome) {
@@ -182,7 +148,7 @@ export function schemaFindings(environment, app, outcome) {
         scope: app,
         key: '(schema)',
         environment,
-        message: `The ${app} schema cannot be checked against ${environment}: ${outcome.message}. Fix the path in secrets.config.mjs.`,
+        message: `The ${app} schema cannot be checked against ${environment}: ${outcome.message}. Fix the command in secrets.config.mjs.`,
       },
     ];
   }

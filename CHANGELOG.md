@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- **Breaking:** the schema pass of `audit` no longer imports a Zod module. An
+  app's `schema` is now `{ keys?, command?, cwd? }`: `command` is the app's own
+  validator, an argv run without a shell in any language (exit `0` valid, `78`
+  could not run, anything else invalid), and `keys` is a JSON Schema file read
+  only for variable names, `required` and `default`. See [ADR-0005](docs/adr/0005-schema-validation-by-command.md)
+  and the README's Schema validation section for the contract and recipes.
+  - Removed: `schema.file`, `schema.exportName`, `schemaRunner` (`runner`,
+    `conditions`, `cwd`), `readSchemaKeys`/`readSchemaDeclarations` reading Zod
+    source, `schemaFile` (now `schemaKeysFile`), and the `tsx` and `zod` peer
+    dependencies. The config loader names the replacement for each old key.
+  - Renamed: `exemptions.unparsedBySchema` is now `exemptions.undeclared`.
+  - The validator's output is redacted of every projected value and capped at
+    500 characters before it reaches an `audit` finding.
+  - The child's environment gains `SOPS_ENVIRONMENT=<environment>`, for apps
+    that have no use for `NODE_ENV`.
+  - A command that does not exist is `schema-missing` (error). Status `78`, a
+    spawn failure, a timeout or a signal is `schema-unchecked` (warn).
+  - `list --json` reports a default as its value (`info`), no longer as source
+    text (`'info'`).
+  - Migrating a Zod app: generate `keys` with `z.toJSONSchema()`, and set
+    `command` to a small script that imports your parser, exits `78` when it
+    cannot load it and `1` on a validation error.
+
 ## v0.2.2 — 2026-10-16
 
 - The grid's side pane is no longer cut at the grid's height: when it is taller

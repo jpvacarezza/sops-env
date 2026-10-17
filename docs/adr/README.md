@@ -36,5 +36,6 @@ the end, `**Amended YYYY-MM-DD.** ...`, or a new ADR that supersedes it.
 - [0002 — Values never leave a process except as fingerprints or behind a closure](./0002-values-never-leave-the-process.md)
 - [0003 — Distribution by first-party git tag, not npm](./0003-distribution-by-git-tag.md)
 - [0004 — An explicit, frozen `ctx` and no singleton](./0004-explicit-frozen-ctx.md)
+- [0005 — Schema validation by external command, key names by JSON Schema](./0005-schema-validation-by-command.md)
 
 Design specs live in [../superpowers/](../superpowers/README.md).

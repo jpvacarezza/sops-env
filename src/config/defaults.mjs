@@ -1,8 +1,8 @@
 /**
  * What a consumer gets without saying so. Equal to the original in-repo tool on the day of the
  * extraction, except where the spec says otherwise: no pairs, no exemptions,
- * no schema, no destination, no `--conditions`, and `apps/*\/src` alone as the
- * contract's source roots.
+ * no schema, no destination, and `apps/*\/src` alone as the contract's source
+ * roots.
  */
 export const DEFAULTS = Object.freeze({
   store: {
@@ -16,10 +16,9 @@ export const DEFAULTS = Object.freeze({
     staging: { nodeEnv: 'staging', sync: true },
     production: { nodeEnv: 'production', sync: true },
   },
-  schemaRunner: { runner: 'tsx', conditions: [], cwd: 'tmp' },
   publicPrefixes: ['NEXT_PUBLIC_'],
   pairs: [],
-  exemptions: { unparsedBySchema: {}, platformProvided: {}, derived: {} },
+  exemptions: { undeclared: {}, platformProvided: {}, derived: {} },
   placeholderPattern: /REPLACE_ME|change-me/i,
   providers: {
     vercel: {
@@ -48,5 +47,7 @@ export const APP_DEFAULTS = Object.freeze({
   dotenv: (app) => `apps/${app}/.env.local`,
   example: (app) => `apps/${app}/.env.example`,
   schema: null,
+  // The OS temp directory: no `.env` files there for a validator to pick up.
+  schemaCwd: 'tmp',
   destination: null,
 });

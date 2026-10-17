@@ -25,7 +25,7 @@ Node >= 24, pnpm 11. Try the CLI on the fixture project: `pnpm try` opens the gr
 - `model/`: pure planners and checks (matrix, invariants, sync and set plans,
   env contract, materialized-file findings).
 - `providers/`: `vercel`, `railway`, the provider registry, `redact.mjs`.
-- `schema/`: optional Zod pass of `audit` (child process, `tsx` from the consumer).
+- `schema/`: optional pass of `audit`: runs each app's validator command (any language, argv, no shell).
 - `ui/`: the grid, split by layer: `shell-layout` (geometry), `shell-state` (pure
   reducer), `shell-render` (painting); `shell.mjs` only re-exports them. Plus
   `console` (the loop), prompts, clipboard.
@@ -36,7 +36,7 @@ Node >= 24, pnpm 11. Try the CLI on the fixture project: `pnpm try` opens the gr
 ## Rules
 
 - **Zero runtime dependencies** (ADR-0001). `src/` imports only `node:` and
-  relative modules; a spec pins it. `tsx` and `zod` stay optional peers.
+  relative modules; a spec pins it.
 - **Values are never logged, printed or put on an argv** (ADR-0002). Output
   carries names or fingerprints; platform errors go through
   `src/providers/redact.mjs`. Details load with `.claude/rules/secrets-handling.md`.

@@ -31,3 +31,8 @@ relative nor `node:`.
 - Adding a dependency is a decision to reverse this ADR, not a routine change.
   Dev-only tooling (vitest, eslint, prettier) is unaffected.
 - A consumer installs a tarball unpack with no transitive graph to audit.
+
+**Amended 2026-10-17.** `tsx` and `zod` are no longer optional peer dependencies.
+ADR-0005 replaced the schema pass of `audit` with an external command the
+consumer names, so the package declares no peer dependencies and resolves
+nothing from the consumer's `node_modules`.

@@ -8,7 +8,7 @@ SOPS + age secrets for a monorepo. A config file is the registry of which variab
 pnpm add -D github:jpvacarezza/sops-env#v0.2.1
 ```
 
-Not published on npm. Requires Node >= 24 and `sops` >= 3.11.0 with an age key on the machine. `tsx` and `zod` are optional peers: `tsx` runs the Zod schema pass of `audit` (see [Schema validation](#schema-validation)).
+Not published on npm. Requires Node >= 24 and `sops` >= 3.11.0 with an age key on the machine. The optional schema pass of `audit` runs your own validator command, in any language (see [Schema validation](#schema-validation)).
 
 ## Versioning
 
@@ -47,7 +47,7 @@ export default {
       keys: {
         API_URL: null,
         SERVICE_KEY: 'This app’s secret for calls to the API.',
-        NEXT_PUBLIC_SITE_URL: 'Inlined by Next; not parsed by the schema.',
+        NEXT_PUBLIC_SITE_URL: 'Inlined by Next; not declared by the schema.',
       },
     },
   },
@@ -57,7 +57,12 @@ export default {
       scopes: ['shared', 'api'],
       dotenv: 'apps/api/.env.local', // default: apps/<app>/.env.local
       example: 'apps/api/.env.example', // default: apps/<app>/.env.example
-      schema: { file: 'apps/api/src/env.ts', exportName: 'parseApiEnv' }, // default: null
+      schema: {
+        // default: null. At least one of `keys` and `command`.
+        keys: 'apps/api/env.schema.json', // JSON Schema read for names only
+        command: ['python', '-m', 'api.config'], // your validator, an argv
+        cwd: 'tmp', // default
+      },
       destination: {
         // default: null (not deployable)
         provider: 'railway',
@@ -72,8 +77,6 @@ export default {
       destination: { provider: 'vercel', project: 'VERCEL_PROJECT_ID_WEB' },
     },
   },
-  // Optional. Defaults to none.
-  schemaRunner: { runner: 'tsx', conditions: [], cwd: 'tmp' }, // defaults shown
   publicPrefixes: ['NEXT_PUBLIC_'], // default; vars with these prefixes sync to Vercel as plain text
   pairs: [
     // default: []
@@ -87,7 +90,7 @@ export default {
   ],
   exemptions: {
     // default: all three empty
-    unparsedBySchema: {
+    undeclared: {
       NEXT_PUBLIC_SITE_URL: 'Next only inlines literal reads.',
     },
     platformProvided: { CI: 'Set by GitHub Actions.' },
@@ -119,7 +122,7 @@ export default {
 };
 ```
 
-An absent `pairs` is `[]`, absent `exemptions` maps are empty, an app without `schema` gets a `schema-unchecked` warning from `audit`, and an app without `destination` is not synced. Resolve-time errors name the field (`apps.web.scopes[1] "shred" is not a declared scope`) and run the shared/app key collision check.
+An absent `pairs` is `[]`, absent `exemptions` maps are empty, an app without `schema.command` gets a `schema-unchecked` warning from `audit`, and an app without `destination` is not synced. Resolve-time errors name the field (`apps.web.scopes[1] "shred" is not a declared scope`) and run the shared/app key collision check.
 
 The config holds names only. A note must not start with `age1`, `AGE-SECRET-KEY-` or `ENC[`, and must not contain `=`; the loader rejects it, because a pasted secret is the failure this guards against. The same rule covers pair `name`/`why` and exemption reasons. Provider fields that name a variable (`vercel.token`/`team`, `railway.token`/`project`/`environment.*`, destination `project`/`service.*`) must be UPPER_SNAKE_CASE, and a rejected string is never echoed. A note is shown in the grid and emitted by `list --json` as `note`.
 
@@ -162,16 +165,72 @@ A destination names a provider: `destination: { provider: 'vercel' | 'railway' |
 
 ## Schema validation
 
-`audit` can run each app's Zod schema over its projection of each environment, so a store that would fail at boot is an error before it ships.
+sops-env does not parse your schema. An app's `schema` has two independent parts, and each is optional:
 
-- `tsx` is resolved from the consumer root (add it as your own devDependency), not from this package.
-- When `tsx` is not installed, or the app has no `schema`, the result is `schema-unchecked` (warn), never a verdict about the store.
-- A configured `schema.file` that does not exist is `schema-missing` (error), so a typo cannot switch the gate off.
-- `schemaRunner.runner: 'node'` runs JS-only schemas without `tsx`.
-- `schemaRunner.conditions` become `--conditions=<name>` in the child's `NODE_OPTIONS`, so workspace packages resolve to sources without a build.
-- `schemaRunner.cwd` is where the child runs: `'tmp'` (default, a directory with no `.env` files) or a path relative to the config.
-- The child's environment is yours minus every variable the registry knows, plus the projection, with `NODE_ENV` taken from the environment's `nodeEnv`.
+- **`command`** is the app's own validator: an argv, run without a shell, in any language. `audit` runs it over each app's projection of each environment, so a store that would fail at boot is an error before it ships.
+- **`keys`** is a JSON Schema document read only for the variable names it declares: `properties`, `required` and `default`. It feeds the grid's `req`/`opt`/default markers and the `missing-required` check. It never judges a value, and it is not an alternative to `command`.
+
+### The command contract
+
+The command gets the app's projection in its environment, plus `SOPS_ENVIRONMENT` (the environment name) and `NODE_ENV` (the environment's `nodeEnv`; a `NODE_ENV` in the store wins). Variables the registry knows are removed from what it inherits from your shell, so the answer is about the store, not about your terminal. It runs in `schema.cwd`: `'tmp'` (default, a directory with no `.env` files) or a path relative to the config.
+
+| Exit status   | Meaning                                                      | `audit` reports           |
+| ------------- | ------------------------------------------------------------ | ------------------------- |
+| `0`           | the environment is valid                                     | nothing                   |
+| `78`          | the validator could not run (it could not load its own code) | `schema-unchecked` (warn) |
+| anything else | the environment is invalid                                   | `schema-invalid` (error)  |
+
+- What the command prints (stderr, else stdout) is the message. Every value of the projection is redacted from it and it is capped at 500 characters, so a validator that quotes the value it rejected does not leak it. Print variable names and constraints anyway.
+- A command that is not found is `schema-missing` (error), so a typo cannot switch the gate off. A command that cannot be started, times out (60 s) or is killed by a signal is `schema-unchecked` (warn). An app without `command` is `schema-unchecked` too. None of these is a verdict about the store.
 - `audit --no-schema` skips the pass.
+
+### Recipes
+
+Every recipe is the same shape: load the app's validator, run it over the process environment, exit `0`, `1` or `78`.
+
+```js
+// Node, Zod: apps/api/validate-env.mjs, run as ['node', 'apps/api/validate-env.mjs']
+let parseApiEnv;
+try {
+  ({ parseApiEnv } = await import('./src/env.mjs'));
+} catch (error) {
+  console.error(error.message);
+  process.exit(78);
+}
+
+try {
+  parseApiEnv(process.env);
+} catch (error) {
+  const issues = error.issues?.map((i) => `${i.path.join('.')}: ${i.message}`);
+  console.error(issues?.join('\n') ?? error.message);
+  process.exit(1);
+}
+```
+
+```python
+# Python, pydantic: api/validate_env.py, run as ['python', '-m', 'api.validate_env']
+import sys
+from pydantic import ValidationError
+
+try:
+    from api.settings import Settings
+except ImportError as error:
+    print(error, file=sys.stderr)
+    sys.exit(78)
+
+try:
+    Settings()  # a pydantic-settings BaseSettings reads os.environ itself
+except ValidationError as error:
+    for issue in error.errors(include_input=False):
+        print(".".join(map(str, issue["loc"])) + ": " + issue["msg"], file=sys.stderr)
+    sys.exit(1)
+```
+
+A Go or Rust binary that parses its own configuration and exits non-zero on failure needs no wrapper. For a TypeScript validator, run it through `tsx` or `node --experimental-strip-types` in the `command`. Write `command` paths as absolute paths when the command is a script: it runs in `schema.cwd`, not in your repository root (`new URL('./x.py', import.meta.url)` in `secrets.config.mjs` gives one).
+
+### The keys file
+
+Generate it from your model so it cannot drift: `z.toJSONSchema(EnvSchema)` with Zod 4, `Settings.model_json_schema()` with pydantic. Only `properties` (names must be UPPER_SNAKE_CASE), `required` and each property's `default` are read. A property with a `default` is a default even when it is also `required`. A document with no `properties` is an error, not an empty contract.
 
 ## Properties
 

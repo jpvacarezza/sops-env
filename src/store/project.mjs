@@ -52,7 +52,7 @@ export function assertValidDocument(ctx, doc) {
  * Flatten the scopes an app receives into the environment it will be given.
  *
  * A missing scope is not an error: `local.enc.yaml` legitimately omits keys
- * that only production sets, and every app's Zod schema is what decides
+ * that only production sets, and every app's own validator is what decides
  * whether the result is complete.
  */
 export function projectEnv(ctx, doc, app) {

@@ -49,18 +49,6 @@
     "*.{json,md,yaml,yml}": "prettier --write"
   },
   "dependencies": {},
-  "peerDependencies": {
-    "tsx": ">=4",
-    "zod": ">=3"
-  },
-  "peerDependenciesMeta": {
-    "tsx": {
-      "optional": true
-    },
-    "zod": {
-      "optional": true
-    }
-  },
   "devDependencies": {
     "@commitlint/cli": "^21.2.3",
     "@commitlint/config-conventional": "^21.2.3",
@@ -71,9 +59,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^17.6.0",
     "prettier": "^3.9.6",
-    "tsx": "^4.23.12",
     "typescript": "~7.0.2",
-    "vitest": "~5.0.4",
-    "zod": "^4.4.3"
+    "vitest": "~5.0.4"
   }
 }
